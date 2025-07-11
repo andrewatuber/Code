@@ -397,10 +397,15 @@ def check_yaku(hand, is_tsumo=False, is_menzen=True, player_wind="동", round_wi
     return yaku_list
 
 
-def calculate_korean_mahjong_points(yaku_list, flower_count=0, is_tsumo=False):
+def calculate_korean_mahjong_points(yaku_list, flower_count=0, is_tsumo=False, is_menzen=True):
     """한국 마작 점수 계산 - 정확한 점수표"""
-    # 기본 점수: 10점
-    base_points = 10
+    # 기본 점수 설정
+    if is_tsumo:
+        base_points = 10  # 쯔모: 10점
+    elif not is_menzen:
+        base_points = 2   # 멘젠이 깨진 상태: 2점
+    else:
+        base_points = 5   # 론 (멘젠): 5점
     
     # 역별 점수 (한국 마작 기준)
     yaku_points = 0
@@ -444,43 +449,28 @@ def calculate_yaku_points(yaku_list):
 
 def is_winning_hand(hand, is_tsumo=False, is_menzen=True, player_wind="동", round_wind="동", flower_count=0):
     """화료 가능 여부 체크"""
-    print("=== 🎯 화료 체크 시작 ===")
-    print(f"패 목록: {hand}")
-    print(f"패 수: {len(hand)}장")
-    print(f"꽃패: {flower_count}장")
-    print(f"쯔모: {is_tsumo}, 멘젠: {is_menzen}, 플레이어 바람: {player_wind}")
-    
-    # 패 구성 분석
-    tile_count = count_tile_groups(hand)
-    print(f"📋 패 구성: {tile_count}")
-    
-    # 상세 분석 정보
-    analysis = analyze_hand_composition(hand)
-    print("🔍 분석 결과:")
-    print(f"   머리(2장): {analysis['pairs']}")
-    print(f"   몸통(3장+): {analysis['triplets']}")
-    print(f"   깡(4장): {analysis['quads']}")
-    print(f"   가능한 순자: {analysis['possible_sequences']}")
-    print(f"   꽃패: {flower_count}장")
-    
     # 기본 패턴 체크 (순자 포함)
     is_valid, message = check_basic_pattern(hand)
     
     if not is_valid:
-        print(f"❌ 화료 실패 - {message}")
-        print("=== 🎯 화료 체크 완료 ===")
         return False
     
     # 역 체크 (꽃패 포함)
     yaku_list = check_yaku(hand, is_tsumo, is_menzen, player_wind, round_wind, flower_count)
     
     if not yaku_list:
-        print("❌ 화료 실패 - 역(役)이 없습니다")
-        print("=== 🎯 화료 체크 완료 ===")
         return False
     
-    print(f"✅ 화료 성공! 역: {', '.join(yaku_list)}")
-    print("=== 🎯 화료 체크 완료 ===")
+    # 멘젠이 깨진 상태에서는 최소 2점 이상이어야 화료 가능
+    if not is_menzen:
+        total_points = calculate_korean_mahjong_points(yaku_list, flower_count, is_tsumo, is_menzen)
+        base_points = 2  # 멘젠이 깨진 상태의 기본 점수
+        actual_yaku_points = total_points - base_points - flower_count
+        
+        # 멘젠이 깨진 상태에서는 역 점수가 최소 2점 이상이어야 함
+        if actual_yaku_points < 2:
+            return False
+    
     return True
 
 

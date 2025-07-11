@@ -51,9 +51,17 @@ class MahjongGame:
 
     def __init__(self):
         pygame.init()
+        pygame.mixer.init()  # 소리 시스템 초기화
         self.screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
         pygame.display.set_caption("한국 마작")
         self.clock = pygame.time.Clock()
+        
+        # 소리 로드
+        try:
+            self.click_sound = pygame.mixer.Sound("click.wav")
+        except:
+            print("경고: click.wav 파일을 찾을 수 없습니다.")
+            self.click_sound = None
         
         # 리소스 로드
         self.resources = ResourceManager()
@@ -70,7 +78,210 @@ class MahjongGame:
         
         # 첫 게임 시작
         self.start_new_game()
+    
+    def play_click_sound(self):
+        """클릭 소리 재생"""
+        if self.click_sound:
+            try:
+                self.click_sound.play()
+            except:
+                pass  # 소리 재생 실패 시 무시
+    
+    def get_winning_hints(self, player_idx):
+        """화료 가능한 패 힌트 반환 - 캐싱 적용"""
+        if player_idx != self.player_index:
+            return []  # 플레이어만 힌트 제공
         
+        # 캐시 키 생성 (손패 + 멜드 + 꽃패)
+        hand = self.hands[player_idx]
+        melds = self.melds[player_idx]
+        flower_count = len(self.flower_tiles[player_idx])
+        
+        # 캐시 키 생성
+        cache_key = (tuple(sorted(hand)), len(melds), flower_count)
+        
+        # 캐시된 결과가 있으면 반환
+        if hasattr(self, 'winning_hints_cache') and cache_key in self.winning_hints_cache:
+            return self.winning_hints_cache[cache_key]
+        
+        # 실제 게임에서 사용 가능한 패들만 체크 (144장 대신 실제 가능한 패만)
+        available_tiles = self.get_available_tiles_for_tenpai()
+        
+        winning_tiles = []
+        
+        # 각 패를 추가해서 화료 가능한지 체크
+        for tile in available_tiles:
+            # 이미 손패에 있는 패는 제외 (같은 패 5장은 불가능)
+            if hand.count(tile) >= 4:
+                continue
+            
+            # 임시로 패를 추가해서 화료 체크
+            temp_hand = hand + [tile]
+            if self.check_winning_hand_with_melds_temp(player_idx, temp_hand, is_tsumo=True):
+                winning_tiles.append(tile)
+        
+        # 중복 제거 및 정리
+        result = self.organize_winning_hints(winning_tiles)
+        
+        # 캐시에 저장
+        if not hasattr(self, 'winning_hints_cache'):
+            self.winning_hints_cache = {}
+        self.winning_hints_cache[cache_key] = result
+        
+        return result
+    
+    def organize_winning_hints(self, hints):
+        """화료 힌트를 정리하여 중복 제거"""
+        # 기본 이름별로 그룹화
+        base_groups = {}
+        for tile in hints:
+            base_name = tile.split('_')[0] if '_' in tile else tile.replace('.png', '')
+            if base_name not in base_groups:
+                base_groups[base_name] = []
+            base_groups[base_name].append(tile)
+        
+        # 정리된 힌트 반환 (각 기본 이름당 하나씩)
+        organized_hints = []
+        for base_name, tiles in base_groups.items():
+            organized_hints.append(tiles[0])  # 첫 번째 복사본 사용
+        
+        return organized_hints
+    
+    def can_riichi(self, player_idx):
+        """엎어 가능 여부 체크 - 론이 가능한 상태에서만 엎어 가능"""
+        if player_idx != self.player_index:
+            return False  # 플레이어만 엎어 가능
+        
+        # 이미 엎어했으면 불가능
+        if self.player_riichi:
+            return False
+        
+        # 멜드가 있으면 엎어 불가능 (멘젠이 아니므로)
+        if len(self.melds[player_idx]) > 0:
+            return False
+        
+        # 론이 가능한 상태인지 체크 (다른 플레이어가 버린 패로 화료 가능)
+        return self.can_ron_for_riichi(player_idx)
+    
+    def can_ron_for_riichi(self, player_idx):
+        """엎어를 위한 론 가능 여부 체크 - 실제 게임에서 사용 가능한 패로 론이 가능한지"""
+        hand = self.hands[player_idx]
+        flower_count = len(self.flower_tiles[player_idx])
+        
+        # 실제 게임에서 사용 가능한 패들만 체크
+        available_tiles = self.get_available_tiles_for_tenpai()
+        
+        for tile in available_tiles:
+            # 임시로 패를 추가해서 론 가능한지 체크
+            temp_hand = hand + [tile]
+            
+            # 멘젠 상태에서 론 가능한지 체크
+            if self.check_winning_hand_with_melds_temp(player_idx, temp_hand, is_tsumo=False):
+                return True
+        
+        return False
+    
+    def is_tenpai(self, player_idx):
+        """간방 상태 체크 - 한 장만 들어오면 화료되는 상태"""
+        hand = self.hands[player_idx]
+        flower_count = len(self.flower_tiles[player_idx])
+        
+        # 현재 손패로 화료 가능한지 먼저 체크
+        if self.check_winning_hand_with_melds(player_idx, is_tsumo=True):
+            return True
+        
+        # 간방 상태 체크: 실제 게임에서 사용 가능한 패들만 체크
+        # (패산에 남아있는 패들 + 다른 플레이어가 버린 패들)
+        available_tiles = self.get_available_tiles_for_tenpai()
+        
+        for tile in available_tiles:
+            # 임시로 패를 추가해서 화료 가능한지 체크
+            temp_hand = hand + [tile]
+            
+            # 멜드를 포함한 화료 체크
+            if self.check_winning_hand_with_melds_temp(player_idx, temp_hand, is_tsumo=True):
+                return True
+        
+        return False
+    
+    def get_available_tiles_for_tenpai(self):
+        """간방 체크용 사용 가능한 패 목록 반환 - 버려진 패 제외"""
+        # 버려진 패들을 수집
+        discarded_tiles = []
+        for discard_pile in self.discard_piles:
+            discarded_tiles.extend(discard_pile)
+        
+        # 각 플레이어의 손패와 멜드에서 사용된 패들 수집
+        used_tiles = []
+        for i in range(4):
+            used_tiles.extend(self.hands[i])
+            for meld in self.melds[i]:
+                if 'tiles' in meld:
+                    used_tiles.extend(meld['tiles'])
+        
+        # 꽃패들도 제외
+        for flower_tiles in self.flower_tiles:
+            used_tiles.extend(flower_tiles)
+        
+        # 사용된 패들의 기본 이름 추출 (복사본 제거)
+        used_base_tiles = set()
+        for tile in used_tiles + discarded_tiles:
+            base_name = tile.split('_')[0] if '_' in tile else tile.replace('.png', '')
+            used_base_tiles.add(base_name)
+        
+        # 사용 가능한 패들 생성 (사용되지 않은 패들만)
+        available_tiles = []
+        all_base_tiles = []
+        
+        # 숫자패 (1-9만, 1-9삭, 1-9통)
+        for number in range(1, 10):
+            for suit in ['만', '삭', '통']:
+                base_name = f"{number}{suit}"
+                all_base_tiles.append(base_name)
+        
+        # 바람패 (동, 남, 서, 북)
+        for wind in ['동', '남', '서', '북']:
+            all_base_tiles.append(wind)
+        
+        # 삼원패 (중, 발, 백)
+        for dragon in ['중', '발', '백']:
+            all_base_tiles.append(dragon)
+        
+        # 각 기본 패 타입에 대해 남은 개수 계산
+        for base_name in all_base_tiles:
+            # 해당 패가 몇 개 사용되었는지 계산
+            used_count = sum(1 for used in used_base_tiles if used == base_name)
+            
+            # 4개 미만으로 사용되었다면 남은 개수만큼 추가
+            remaining = 4 - used_count
+            if remaining > 0:
+                for i in range(remaining):
+                    available_tiles.append(f"{base_name}_1.png")
+        
+        return available_tiles
+    
+    def get_all_possible_tiles(self):
+        """모든 가능한 패 목록 반환"""
+        tiles = []
+        
+        # 숫자패 (1-9만, 1-9삭, 1-9통)
+        for number in range(1, 10):
+            for suit in ['만', '삭', '통']:
+                for copy in range(1, 5):  # 각 패 4장씩
+                    tiles.append(f"{number}{suit}_{copy}.png")
+        
+        # 바람패 (동, 남, 서, 북)
+        for wind in ['동', '남', '서', '북']:
+            for copy in range(1, 5):
+                tiles.append(f"{wind}_{copy}.png")
+        
+        # 삼원패 (중, 발, 백)
+        for dragon in ['중', '발', '백']:
+            for copy in range(1, 5):
+                tiles.append(f"{dragon}_{copy}.png")
+        
+        return tiles
+    
     def init_game_state(self):
         """게임 상태 초기화"""
         # 플레이어 설정
@@ -112,6 +323,7 @@ class MahjongGame:
         self.pending_player = None
         self.action_choices = []
         self.last_discard_player = None
+        self.after_peng = False  # 펑/깡 후 플래그 초기화
         
         # 애니메이션 관련
         self.discard_animations = []
@@ -123,6 +335,10 @@ class MahjongGame:
         self.winning_yaku_info = None
         self.winning_player_idx = None
         self.winning_result_type = None
+        
+        # 엎어 관련
+        self.player_riichi = False  # 플레이어가 엎어했는지
+        self.riichi_bonus = 1  # 엎어 보너스 점수
         
         # 예약된 페이즈 전환
         self.scheduled_phase = None
@@ -642,9 +858,14 @@ class MahjongGame:
             self.finish_game("tsumo", self.player_index)
             return
         
-        # 자신의 턴에 가능한 액션 체크 (암깡, 가깡)
+        # 자신의 턴에 가능한 액션 체크 (암깡, 가깡, 리치)
         self_actions = self.get_available_actions(self.player_index, None, is_self_turn=True)
         if self_actions:
+            print(f"🎯 플레이어 액션 가능: {self_actions}")
+            # 리치가 포함되어 있으면 특별히 표시
+            riichi_action = next((action for action in self_actions if action['type'] == 'riichi'), None)
+            if riichi_action:
+                print(f"🎯 리치 다이얼로그 표시!")
             self.show_action_choice_ui(self_actions, None)
         else:
             # 플레이어 입력 대기
@@ -763,6 +984,38 @@ class MahjongGame:
             print(f"❌ {ai_name} 손패 수 오류: {current_hand_size}장 (예상: {expected_hand_size_for_draw} 또는 {expected_hand_size_for_discard}장)")
             self.ai_discard_and_continue()
 
+    def ai_discard_after_peng(self):
+        """펑 후 AI 패 버리기 - 다른 플레이어 액션 체크 없이 다음 턴으로"""
+        ai_name = self.player_names[self.current_turn]
+        hand = self.hands[self.current_turn]
+        if not hand:
+            print(f"❌ {ai_name} 손패가 비어있음!")
+            self.advance_turn()
+            return
+        
+        discarded = ai_choose_discard(hand, self.current_turn)
+        if discarded and discarded in hand:
+            hand.remove(discarded)
+            
+            # 패 버리기 애니메이션 추가 (버림패 더미에는 애니메이션 완료 후 추가)
+            ai_position = self.get_player_screen_position(self.current_turn)
+            from_pos = self.get_ai_hand_position(self.current_turn)
+            to_pos = self.get_discard_pile_next_position(self.current_turn)  # 정확한 다음 위치로
+            self.add_discard_animation(discarded, from_pos, to_pos, self.current_turn)
+            
+            print(f"✅ {ai_name}가 {discarded} 버림 (펑 후)")
+            
+            # AI 손패 정렬 - 위치에 따라
+            ai_position = self.get_player_screen_position(self.current_turn)
+            self.hands[self.current_turn] = sort_hand_by_position(hand, ai_position)
+            
+            # 애니메이션 완료 후 버림패 더미에 추가하고 다음 턴으로 진행
+            self.waiting_for_animation = True
+            self.animation_callback = lambda: self.complete_ai_discard_after_peng(discarded)
+        else:
+            print(f"❌ {ai_name} 패 버리기 실패")
+            self.advance_turn()
+
     def ai_discard_and_continue(self):
         """AI 패 버리기 후 다음 턴 진행"""
         ai_name = self.player_names[self.current_turn]
@@ -795,6 +1048,15 @@ class MahjongGame:
             print(f"❌ {ai_name} 패 버리기 실패")
             self.advance_turn()
     
+    def complete_ai_discard_after_peng(self, discarded_tile):
+        """펑 후 AI 패 버리기 완료 처리 (애니메이션 후 호출) - 다른 플레이어 액션 체크 없이 다음 턴으로"""
+        # 버림패 더미에 추가
+        self.discard_piles[self.current_turn].append(discarded_tile)
+        print(f"🎬 애니메이션 완료: {discarded_tile}이 버림패 더미에 추가됨 (펑 후)")
+        
+        # 펑 후에는 다른 플레이어 액션 체크 없이 바로 다음 턴으로 진행
+        self.advance_turn()
+
     def complete_ai_discard(self, discarded_tile):
         """AI 패 버리기 완료 처리 (애니메이션 후 호출)"""
         # 버림패 더미에 추가
@@ -1009,6 +1271,9 @@ class MahjongGame:
             print(f"✅ 플레이어가 {discarded_tile} 버림")
             self.waiting_for_player = False
             
+            # 패를 실제로 버릴 때만 클릭 소리 재생
+            self.play_click_sound()
+            
             # 패 버리기 애니메이션 추가 (버림패 더미에는 애니메이션 완료 후 추가)
             if clicked_tile_pos:
                 to_pos = self.get_discard_pile_next_position(self.player_index)  # 정확한 다음 위치로
@@ -1026,8 +1291,14 @@ class MahjongGame:
         self.discard_piles[self.player_index].append(discarded_tile)
         print(f"🎬 애니메이션 완료: {discarded_tile}이 버림패 더미에 추가됨")
         
-        # 액션 체크
-        self.check_actions_after_discard(self.player_index, discarded_tile)
+        # 펑 후인지 확인
+        if hasattr(self, 'after_peng') and self.after_peng:
+            print("🎯 펑 후 패 버리기 - 다른 플레이어 액션 체크 없이 다음 턴으로")
+            self.after_peng = False  # 플래그 초기화
+            self.advance_turn()
+        else:
+            # 일반적인 패 버리기 - 다른 플레이어 액션 체크
+            self.check_actions_after_discard(self.player_index, discarded_tile)
 
     def render(self):
         """화면 렌더링"""
@@ -1482,10 +1753,64 @@ class MahjongGame:
             info_text += f" + 꽃패 {flower_count}장"
         if meld_count > 0:
             info_text += f" + 멜드 {meld_count}개"
+        
+        # 엎어 상태 표시
+        if self.player_riichi:
+            info_text += " [엎어]"
+        
         info_surface = self.resources.render_text_with_emoji(info_text, "small", COLORS["text"])
         info_x = TABLE_CENTER_X - info_surface.get_width() // 2
         info_y = start_y + TILE_SIZE[1] + 5
         self.screen.blit(info_surface, (info_x, info_y))
+        
+        # 화료 힌트 표시 (플레이어 턴이고 게임 진행 중일 때만)
+        if (self.current_turn == self.player_index and 
+            self.game_phase == "playing" and 
+            self.waiting_for_player):
+            
+            winning_hints = self.get_winning_hints(self.player_index)
+            if winning_hints:
+                # 화료 힌트를 왼쪽 아래 구석에 표시 (위치 조정)
+                hint_area_x = 20  # 왼쪽 여백 (50 → 20으로 더 왼쪽으로)
+                hint_area_y = SCREEN_HEIGHT - 120  # 아래쪽 여백 (200 → 120으로 더 아래로)
+                
+                # 힌트 개수에 따라 배경 크기 동적 조정
+                hint_count = len(winning_hints)
+                tile_size = TILE_SIZE_DISCARD  # (36, 54) AI 패 크기 사용
+                tile_spacing = 30  # 패 간격
+                
+                # 기본 크기 (3개 패 기준)
+                base_width = 3 * tile_size[0] + 2 * tile_spacing + 20  # 패 3개 + 간격 + 여백
+                base_height = tile_size[1] + 50  # 패 높이 + 텍스트 + 여백
+                
+                # 실제 필요한 크기 계산
+                needed_width = hint_count * tile_size[0] + (hint_count - 1) * tile_spacing + 20
+                actual_width = max(base_width, needed_width)  # 최소 3개 패 크기 보장
+                actual_height = base_height
+                
+                # 화료 힌트 배경 (반투명) - 동적 크기
+                hint_bg_surface = pygame.Surface((actual_width, actual_height))
+                hint_bg_surface.set_alpha(180)
+                hint_bg_surface.fill((40, 40, 40))
+                self.screen.blit(hint_bg_surface, (hint_area_x, hint_area_y))
+                
+                # 화료 힌트 텍스트
+                hint_text = f"화료 가능: {hint_count}개 패"
+                hint_surface = self.resources.render_text_with_emoji(hint_text, "small", COLORS["highlight"])
+                hint_x = hint_area_x + 10
+                hint_y = hint_area_y + 10
+                self.screen.blit(hint_surface, (hint_x, hint_y))
+                
+                # 화료 가능한 패들을 실제 마작패 이미지로 표시
+                if hint_count <= 12:  # 최대 12개까지 표시
+                    hint_tiles_x = hint_area_x + 10
+                    hint_tiles_y = hint_y + 25
+                    
+                    for i, hint_tile in enumerate(winning_hints):
+                        # AI 패 크기로 마작패 이미지 렌더링
+                        tile_surface = self.resources.get_tile_surface(hint_tile, tile_size)
+                        tile_x = hint_tiles_x + i * tile_spacing
+                        self.screen.blit(tile_surface, (tile_x, hint_tiles_y))
 
     def render_ai_area(self, pos):
         idx = self.screen_to_player[pos]
@@ -1739,7 +2064,12 @@ class MahjongGame:
                 color = COLORS["text"]
                 prefix = "   "
             
-            score_text = f"{prefix}{name}: {score}점"
+            # 리치 상태 표시
+            riichi_status = ""
+            if i == self.player_index and self.player_riichi:
+                riichi_status = " [리치]"
+            
+            score_text = f"{prefix}{name}: {score}점{riichi_status}"
             score_surface = self.resources.render_text_with_emoji(score_text, "small", color)
             self.screen.blit(score_surface, (score_x, y_pos))
 
@@ -2140,6 +2470,11 @@ class MahjongGame:
                 available_jia_gang = self.can_jia_gang(player_idx, self.drawn_tile)
                 if available_jia_gang:
                     actions.append({'type': 'jia_gang', 'tiles': available_jia_gang})
+            
+            # 엎어 체크 (뽑은 패가 있을 때만)
+            if self.drawn_tile and self.can_riichi(player_idx):
+                print(f"🎯 리치 가능! 간방 상태 확인됨")
+                actions.append({'type': 'riichi'})
         else:
             # 다른 플레이어가 버린 패에 대한 액션들
             if discarded_tile:
@@ -2198,21 +2533,29 @@ class MahjongGame:
         self.current_turn = player_idx
         print(f"🔄 펑 후 턴: {self.player_names[player_idx]}")
         
+        # 펑 후 플래그 설정
+        self.after_peng = True
+        
         # 상태 초기화
         self.pending_action = None
         self.pending_tile = None
         self.last_discard_player = None
         
-        # 펑 후에는 패를 버려야 함
+        # 손패 정렬
+        player_position = self.get_player_screen_position(player_idx)
+        self.hands[player_idx] = sort_hand_by_position(self.hands[player_idx], player_position)
+        
+        # 펑 후에는 패를 버려야 함 (한국 마작 규칙 - 패를 뽑지 않음)
         if player_idx == self.player_index:
             # 플레이어인 경우
             self.waiting_for_player = True
             self.waiting_for_animation = False  # 애니메이션 대기 해제
             print("👤 펑 완료! 패를 선택해서 버리세요")
         else:
-            # AI인 경우
+            # AI인 경우 - 패를 버리고 다음 플레이어로 순서 넘기기
             print(f"🤖 {self.player_names[player_idx]} 펑 완료, AI가 패 버리기")
-            self.ai_discard_and_continue()
+            # AI가 패를 버린 후 다음 플레이어로 순서 넘기기 (다른 플레이어 액션 체크 없이)
+            self.ai_discard_after_peng()
 
     def execute_gang(self, player_idx, gang_type, tile):
         """깡 실행"""
@@ -2317,6 +2660,9 @@ class MahjongGame:
         self.current_turn = player_idx
         print(f"🔄 깡 후 턴: {self.player_names[player_idx]} (인덱스: {player_idx})")
         
+        # 깡 후 플래그 설정 (펑과 동일하게 처리)
+        self.after_peng = True
+        
         # 상태 초기화
         self.pending_action = None
         self.pending_tile = None
@@ -2339,13 +2685,42 @@ class MahjongGame:
             # AI인 경우
             self.waiting_for_player = False  # AI 턴에서는 False로 설정
             print(f"🤖 {self.player_names[player_idx]} 깡 완료, AI가 패 버리기 (waiting_for_player: {self.waiting_for_player})")
-            self.ai_discard_and_continue()
+            self.ai_discard_after_peng()  # 깡 후에도 펑과 동일하게 처리
         
         print(f"🔧 깡 후 상태 설정 완료!")
         print(f"   - current_turn: {self.current_turn}")
         print(f"   - waiting_for_player: {self.waiting_for_player}")
         print(f"   - waiting_for_animation: {self.waiting_for_animation}")
         print(f"   - drawn_tile: {self.drawn_tile}")
+    
+    def execute_riichi(self, player_idx):
+        """리치 실행"""
+        print(f"🎯 {self.player_names[player_idx]}이 리치를 선언!")
+        
+        # 리치 상태로 설정
+        self.player_riichi = True
+        
+        # 뽑은 패를 손패에 추가
+        if self.drawn_tile:
+            self.hands[player_idx].append(self.drawn_tile)
+            self.drawn_tile = None
+            self.player_waiting = False
+        
+        # 손패 정렬
+        player_position = self.get_player_screen_position(player_idx)
+        self.hands[player_idx] = sort_hand_by_position(self.hands[player_idx], player_position)
+        
+        print(f"✅ 리치 완료! {self.player_names[player_idx]}이 리치 상태가 되었습니다.")
+        
+        # 리치 후에는 패를 버려야 함
+        if player_idx == self.player_index:
+            # 플레이어인 경우
+            self.waiting_for_player = True
+            print("👤 리치 완료! 패를 선택해서 버리세요")
+        else:
+            # AI인 경우
+            print(f"🤖 {self.player_names[player_idx]} 리치 완료, AI가 패 버리기")
+            self.ai_discard_and_continue()
 
     def check_actions_after_discard(self, discard_player, discarded_tile):
         """패를 버린 후 다른 플레이어들의 액션 가능 여부 체크"""
@@ -2473,6 +2848,9 @@ class MahjongGame:
                 self.execute_gang(action_player, "jia_gang", tile_to_gang)
             else:
                 print(f"❌ 가깡 타일 정보가 없음: {action}")
+        elif action_type == "riichi":
+            # 엎어 실행
+            self.execute_riichi(action_player)
         elif action_type == "pass":
             print("👤 패스 선택")
             self.continue_after_discard()
@@ -2482,6 +2860,10 @@ class MahjongGame:
         self.pending_action = None
         self.pending_tile = None
         self.pending_player = None
+        
+        # 액션 실행 후 다음 턴으로 진행 (패스가 아닌 경우)
+        if action_type != "pass":
+            self.continue_after_discard()
     
     def continue_after_discard(self):
         """패 버리기 후 정상적인 다음 턴 진행"""
@@ -2577,7 +2959,8 @@ class MahjongGame:
                 'peng': '펑',
                 'ming_gang': '명깡', 
                 'an_gang': '암깡',
-                'jia_gang': '가깡'
+                'jia_gang': '가깡',
+                'riichi': '엎어'
             }
             action_text = action_names.get(action['type'], action['type'])
             
@@ -2604,17 +2987,12 @@ class MahjongGame:
 
     def check_winning_hand_with_melds(self, player_idx, is_tsumo=False):
         """멜드를 포함한 화료 체크"""
-        print("=== 🎯 멜드 포함 화료 체크 시작 ===")
-        
         hand = self.hands[player_idx]
         melds = self.melds[player_idx]
         flower_count = len(self.flower_tiles[player_idx])
         
-        print(f"손패: {hand} ({len(hand)}장)")
-        print(f"멜드: {len(melds)}개")
-        for i, meld in enumerate(melds):
-            print(f"  멜드 {i+1}: {meld['type']} - {meld.get('tiles', [])}")
-        print(f"꽃패: {flower_count}장")
+        # 멘젠 여부 확인 (멜드가 없으면 멘젠)
+        is_menzen = len(melds) == 0
         
         # 멜드를 가상의 패로 변환하여 전체 패 구성 만들기
         virtual_hand = hand.copy()
@@ -2638,23 +3016,17 @@ class MahjongGame:
                     # 펑은 3장
                     virtual_hand.extend([tile_base + '_1.png'] * 3)
         
-        print(f"가상 손패 (멜드 포함): {virtual_hand} ({len(virtual_hand)}장)")
-        
-        # 표준 화료 체크 실행
-        result = is_winning_hand(virtual_hand, is_tsumo=is_tsumo, flower_count=flower_count)
-        
-        if result:
-            print("✅ 멜드 포함 화료 성공!")
-        else:
-            print("❌ 멜드 포함 화료 실패")
-        
-        print("=== 🎯 멜드 포함 화료 체크 완료 ===")
+        # 표준 화료 체크 실행 (멘젠 여부 전달)
+        result = is_winning_hand(virtual_hand, is_tsumo=is_tsumo, is_menzen=is_menzen, flower_count=flower_count)
         return result
     
     def check_winning_hand_with_melds_temp(self, player_idx, temp_hand, is_tsumo=False):
         """임시 손패로 멜드를 포함한 화료 체크"""
         melds = self.melds[player_idx]
         flower_count = len(self.flower_tiles[player_idx])
+        
+        # 멘젠 여부 확인 (멜드가 없으면 멘젠)
+        is_menzen = len(melds) == 0
         
         # 멜드를 가상의 패로 변환하여 전체 패 구성 만들기
         virtual_hand = temp_hand.copy()
@@ -2678,8 +3050,8 @@ class MahjongGame:
                     # 펑은 3장
                     virtual_hand.extend([tile_base + '_1.png'] * 3)
         
-        # 표준 화료 체크 실행
-        result = is_winning_hand(virtual_hand, is_tsumo=is_tsumo, flower_count=flower_count)
+        # 표준 화료 체크 실행 (멘젠 여부 전달)
+        result = is_winning_hand(virtual_hand, is_tsumo=is_tsumo, is_menzen=is_menzen, flower_count=flower_count)
         return result
 
     def can_ron_with_tile(self, player_idx, discarded_tile):
@@ -2691,6 +3063,9 @@ class MahjongGame:
         hand = temp_hand
         melds = self.melds[player_idx]
         flower_count = len(self.flower_tiles[player_idx])
+        
+        # 멘젠 여부 확인 (멜드가 없으면 멘젠)
+        is_menzen = len(melds) == 0
         
         # 론 체크 시점에서 손패 수 계산 (버린 패를 받은 상태)
         expected_hand_size = 14 - (len(melds) * 3)
@@ -2719,12 +3094,15 @@ class MahjongGame:
                     # 펑은 3장
                     virtual_hand.extend([tile_base + '_1.png'] * 3)
         
-        # 표준 화료 체크 실행
-        result = is_winning_hand(virtual_hand, is_tsumo=False, flower_count=flower_count)
+        # 표준 화료 체크 실행 (멘젠 여부 전달)
+        result = is_winning_hand(virtual_hand, is_tsumo=False, is_menzen=is_menzen, flower_count=flower_count)
         return result
 
     def handle_action_choice_click(self, pos):
         """액션 선택 UI에서 마우스 클릭 처리"""
+        # 클릭 소리 재생
+        self.play_click_sound()
+        
         if not self.action_choices:
             return False
         
@@ -2747,6 +3125,9 @@ class MahjongGame:
             if button_rect.collidepoint(pos):
                 print(f"👤 액션 선택: {action['type']}")
                 
+                # 액션 선택 시 클릭 소리 재생
+                self.play_click_sound()
+                
                 self.pending_action = None
                 self.pending_tile = None
                 self.action_choices = []
@@ -2761,6 +3142,9 @@ class MahjongGame:
         
         if pass_button_rect.collidepoint(pos):
             print("👤 패스 클릭")
+            
+            # 패스 선택 시 클릭 소리 재생
+            self.play_click_sound()
             
             # 하이라이트 해제
             self.clear_tile_highlight()
@@ -2825,8 +3209,8 @@ class MahjongGame:
         is_tsumo = (result_type == "tsumo")
         player_wind = "동"  # 간단화
         round_wind = "동"
-        yaku_list = check_yaku(virtual_hand, is_tsumo, True, player_wind, round_wind, flower_count)
-        yaku_points = calculate_korean_mahjong_points(yaku_list, flower_count, is_tsumo)
+        yaku_list = check_yaku(virtual_hand, is_tsumo, is_menzen, player_wind, round_wind, flower_count)
+        yaku_points = calculate_korean_mahjong_points(yaku_list, flower_count, is_tsumo, is_menzen)
         
         # 론 시 가져온 패 정보
         ron_tile_info = None
@@ -2876,10 +3260,17 @@ class MahjongGame:
         
         # 점수 계산 (한국 마작 기준 - 멘젠쯔모, 겐쇼 포함)
         if hasattr(self, 'winning_yaku_info') and self.winning_yaku_info:
-            base_points = 10
             yaku_list = self.winning_yaku_info['yaku_list']
             flower_count = self.winning_yaku_info['flower_count']
             is_menzen = self.winning_yaku_info.get('is_menzen', True)
+            
+            # 기본 점수 설정
+            if result_type == "tsumo":
+                base_points = 10  # 쯔모: 10점
+            elif not is_menzen:
+                base_points = 2   # 멘젠이 깨진 상태: 2점
+            else:
+                base_points = 5   # 론 (멘젠): 5점
             
             # 역 보너스 계산
             yaku_bonus = 0
@@ -2913,8 +3304,14 @@ class MahjongGame:
             if result_type == "tsumo":
                 gensho_bonus = 1  # 쯔모한 패 1장
             
+            # 엎어 보너스
+            riichi_bonus = 0
+            if winner_idx == self.player_index and self.player_riichi:
+                riichi_bonus = self.riichi_bonus
+                print(f"🎯 엎어 보너스: +{riichi_bonus}점")
+            
             # 총 점수 계산
-            points = base_points + yaku_bonus + menzen_tsumo_bonus + gensho_bonus + flower_count
+            points = base_points + yaku_bonus + menzen_tsumo_bonus + gensho_bonus + flower_count + riichi_bonus
         else:
             points = 10  # 기본 점수
         
@@ -3000,9 +3397,9 @@ class MahjongGame:
         overlay.fill((0, 0, 0))
         self.screen.blit(overlay, (0, 0))
         
-        # 메인 패널 (텍스트 한 줄 정도 늘림)
-        panel_width = 400
-        panel_height = 220  # 200 → 220으로 늘림 (텍스트 한 줄 정도)
+        # 메인 패널 (크기 증가)
+        panel_width = 450  # 400 → 450으로 증가
+        panel_height = 280  # 220 → 280으로 증가 (더 많은 공간)
         panel_x = (SCREEN_WIDTH - panel_width) // 2
         panel_y = (SCREEN_HEIGHT - panel_height) // 2
         
@@ -3035,7 +3432,7 @@ class MahjongGame:
             color = COLORS["highlight"] if i == self.game_winner else COLORS["text"]
             player_surface = self.resources.render_text_with_emoji(player_text, "small", color)
             player_x = panel_x + (panel_width - player_surface.get_width()) // 2
-            player_y = score_y + 20 + i * 18
+            player_y = score_y + 25 + i * 25  # 20 + i * 18 → 25 + i * 25로 증가 (행간 증가)
             self.screen.blit(player_surface, (player_x, player_y))
         
         # 안내 메시지
@@ -3064,7 +3461,7 @@ class MahjongGame:
                 
                 rank_surface = self.resources.render_text_with_emoji(rank_text, "small", COLORS["text"])
                 rank_x = panel_x + (panel_width - rank_surface.get_width()) // 2
-                rank_y_pos = rank_y + 15 + (rank - 1) * 15
+                rank_y_pos = rank_y + 20 + (rank - 1) * 20  # 15 + (rank - 1) * 15 → 20 + (rank - 1) * 20로 증가 (순위 행간 증가)
                 self.screen.blit(rank_surface, (rank_x, rank_y_pos))
             
             next_game_text = ""
@@ -3117,6 +3514,10 @@ class MahjongGame:
         self.pending_player = None
         self.action_choices = []
         self.last_discard_player = None
+        self.after_peng = False  # 펑/깡 후 플래그 초기화
+        
+        # 캐시 초기화
+        self.winning_hints_cache = {}
         
         # 애니메이션 관련 초기화
         self.discard_animations = []
@@ -3233,6 +3634,11 @@ class MahjongGame:
             
         return (tile_x, tile_y)
 
+    def clear_winning_hints_cache(self):
+        """화료 힌트 캐시 클리어"""
+        if hasattr(self, 'winning_hints_cache'):
+            self.winning_hints_cache.clear()
+    
     def clear_click_buffer(self):
         """클릭 이벤트 버퍼 초기화"""
         self.click_buffer = []
@@ -3549,13 +3955,13 @@ class MahjongGame:
                 yaku_surface = self.resources.render_text_with_emoji(yaku_text, "small", COLORS["text"])
                 yaku_x = panel_x + 30
                 self.screen.blit(yaku_surface, (yaku_x, current_y))
-                current_y += 18
+                current_y += 22  # 18 → 22로 증가 (역 정보 행간 증가)
         else:
             no_yaku_text = "• 역 없음 (기본 화료)"
             no_yaku_surface = self.resources.render_text_with_emoji(no_yaku_text, "small", COLORS["text"])
             no_yaku_x = panel_x + 30
             self.screen.blit(no_yaku_surface, (no_yaku_x, current_y))
-            current_y += 18
+            current_y += 22  # 18 → 22로 증가 (역 정보 행간 증가)
         
         current_y += 15  # 더 많은 간격
         
@@ -3566,7 +3972,16 @@ class MahjongGame:
         current_y += 25
         
         # 점수 세부 계산
-        base_points = 10
+        is_menzen = self.winning_yaku_info.get('is_menzen', True)
+        
+        # 기본 점수 설정
+        if self.winning_result_type == "tsumo":
+            base_points = 10  # 쯔모: 10점
+        elif not is_menzen:
+            base_points = 2   # 멘젠이 깨진 상태: 2점
+        else:
+            base_points = 5   # 론 (멘젠): 5점
+        
         yaku_bonus = 0
         for yaku in yaku_list:
             if "탕야오" in yaku or "핀후" in yaku or "자풍" in yaku or "장풍" in yaku or "역패" in yaku or "멘젠쯔모" in yaku:
@@ -3628,7 +4043,7 @@ class MahjongGame:
             info_surface = self.resources.render_text_with_emoji(info, "small", color)
             info_x = panel_x + 30
             self.screen.blit(info_surface, (info_x, current_y))
-            current_y += 18
+            current_y += 22  # 18 → 22로 증가 (점수 정보 행간 증가)
         
         # 안내 메시지 (작게) - 패널 높이에 맞춰 조정
         guide_text = "클릭하여 계속..."

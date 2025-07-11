@@ -118,7 +118,8 @@ class ActionDialogManager:
                 'peng': '펑',
                 'ming_gang': '명깡',
                 'an_gang': '암깡',
-                'jia_gang': '가깡'
+                'jia_gang': '가깡',
+                'riichi': '리치'
             }
             action_text = action_names.get(action.get('type', action), str(action))
             
