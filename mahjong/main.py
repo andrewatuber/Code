@@ -8,7 +8,7 @@ import random
 import json
 import os
 import math
-from mahjong_resources import ResourceManager, SCREEN_WIDTH, SCREEN_HEIGHT, COLORS, TABLE_CENTER_X, TABLE_CENTER_Y, TILE_SIZE, TILE_SIZE_DISCARD, TILE_SIZE_WALL
+from mahjong_resources import ResourceManager, SCREEN_WIDTH, SCREEN_HEIGHT, COLORS, TABLE_CENTER_X, TABLE_CENTER_Y, TILE_SIZE, TILE_SIZE_DISCARD, TILE_SIZE_WALL, get_resource_path
 from mahjong_game import sort_hand, sort_hand_by_position, is_flower_tile, is_winning_hand
 from mahjong_ai import ai_choose_discard
 from discard_manager import DiscardManager
@@ -58,7 +58,8 @@ class MahjongGame:
         
         # 소리 로드
         try:
-            self.click_sound = pygame.mixer.Sound("click.wav")
+            click_sound_path = get_resource_path("click.wav")
+            self.click_sound = pygame.mixer.Sound(click_sound_path)
         except:
             print("경고: click.wav 파일을 찾을 수 없습니다.")
             self.click_sound = None
@@ -3205,6 +3206,9 @@ class MahjongGame:
                 else:
                     virtual_hand.extend([tile_base + '_1.png'] * 3)
         
+        # 멘젠 여부 확인 (멜드가 없으면 멘젠)
+        is_menzen = len(melds) == 0
+        
         # 역 체크
         is_tsumo = (result_type == "tsumo")
         player_wind = "동"  # 간단화
@@ -3224,9 +3228,6 @@ class MahjongGame:
                     'from_player': self.last_discard_player,
                     'from_player_name': self.player_names[self.last_discard_player]
                 }
-        
-        # 멘젠 여부 확인 (멜드가 없으면 멘젠)
-        is_menzen = len(melds) == 0
         
         # 다이얼로그 정보 저장
         self.winning_dialog_active = True

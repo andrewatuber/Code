@@ -1,0 +1,3 @@
+([('Korean_Mahjong',
+   '/Users/andrewj/Coding/Code/mahjong/dist/Korean_Mahjong',
+   'EXECUTABLE')],)

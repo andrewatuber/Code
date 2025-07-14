@@ -8,7 +8,20 @@
 
 import pygame
 import os
+import sys
 import unicodedata
+
+
+def get_resource_path(relative_path):
+    """PyInstaller 패키징을 고려한 리소스 파일 경로 반환"""
+    try:
+        # PyInstaller가 생성한 임시 폴더 경로
+        base_path = getattr(sys, '_MEIPASS', os.path.abspath("."))
+    except Exception:
+        # 개발 환경에서는 현재 디렉토리 사용
+        base_path = os.path.abspath(".")
+    
+    return os.path.join(base_path, relative_path)
 
 
 # 화면 및 게임 설정
@@ -170,8 +183,12 @@ class ResourceManager:
         """모든 타일 이미지 로드"""
         print("=== 타일 이미지 로딩 시작 ===")
         
+        # PyInstaller 패키징을 고려한 타일 폴더 경로
+        tile_folder_path = get_resource_path(TILE_FOLDER)
+        print(f"타일 폴더 경로: {tile_folder_path}")
+        
         # 타일 뒷면 로드
-        back_path = os.path.join(TILE_FOLDER, TILE_BACK)
+        back_path = os.path.join(tile_folder_path, TILE_BACK)
         if os.path.exists(back_path):
             self.tile_images[TILE_BACK] = load_tile_image(back_path, TILE_SIZE)
             print(f"✓ 타일 뒷면 로딩: {TILE_BACK}")
@@ -182,18 +199,18 @@ class ResourceManager:
         # 모든 게임 타일 로드
         loaded_count = 0
         
-        if not os.path.exists(TILE_FOLDER):
-            print(f"❌ 타일 폴더가 없습니다: {TILE_FOLDER}")
+        if not os.path.exists(tile_folder_path):
+            print(f"❌ 타일 폴더가 없습니다: {tile_folder_path}")
             return
         
         try:
-            files = os.listdir(TILE_FOLDER)
+            files = os.listdir(tile_folder_path)
             for filename in files:
                 if filename.lower().endswith(('.png', '.jpg', '.jpeg')):
                     if filename == TILE_BACK:
                         continue
                     
-                    file_path = os.path.join(TILE_FOLDER, filename)
+                    file_path = os.path.join(tile_folder_path, filename)
                     normalized_filename = unicodedata.normalize('NFC', filename)
                     
                     try:
