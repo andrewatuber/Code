@@ -1,0 +1,420 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Virtual Fitting - 간단 테스트</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 12px;
+            padding: 30px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+        }
+        
+        h1 {
+            text-align: center;
+            color: #333;
+            margin-bottom: 30px;
+            font-size: 2.5rem;
+        }
+        
+        .step {
+            margin-bottom: 30px;
+            padding: 20px;
+            border: 2px solid #e1e1e1;
+            border-radius: 8px;
+        }
+        
+        .step h2 {
+            color: #667eea;
+            margin-bottom: 15px;
+        }
+        
+        .form-group {
+            margin-bottom: 15px;
+        }
+        
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 600;
+            color: #333;
+        }
+        
+        input[type="file"], input[type="number"] {
+            width: 100%;
+            padding: 10px;
+            border: 2px solid #e1e1e1;
+            border-radius: 6px;
+            font-size: 16px;
+        }
+        
+        button {
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 6px;
+            font-size: 16px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        
+        button:hover {
+            background: #5a6fd8;
+        }
+        
+        button:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+        
+        .result {
+            margin-top: 20px;
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 6px;
+        }
+        
+        .measurements {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 10px;
+            margin-top: 15px;
+        }
+        
+        .measurement-item {
+            background: white;
+            padding: 10px;
+            border-radius: 6px;
+            text-align: center;
+        }
+        
+        .measurement-label {
+            font-size: 12px;
+            color: #666;
+        }
+        
+        .measurement-value {
+            font-size: 18px;
+            font-weight: 600;
+            color: #333;
+        }
+        
+        .error {
+            color: #dc3545;
+            background: #f8d7da;
+            padding: 10px;
+            border-radius: 6px;
+            margin-top: 10px;
+        }
+        
+        .success {
+            color: #155724;
+            background: #d4edda;
+            padding: 10px;
+            border-radius: 6px;
+            margin-top: 10px;
+        }
+        
+        .api-test {
+            background: #e3f2fd;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+        
+        .status {
+            font-weight: 600;
+            padding: 5px 10px;
+            border-radius: 4px;
+            display: inline-block;
+        }
+        
+        .status.online {
+            background: #d4edda;
+            color: #155724;
+        }
+        
+        .status.offline {
+            background: #f8d7da;
+            color: #721c24;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎯 Virtual Fitting</h1>
+        
+        <div class="api-test">
+            <h3>백엔드 서버 상태</h3>
+            <p>상태: <span id="serverStatus" class="status">확인 중...</span></p>
+            <p id="serverInfo"></p>
+        </div>
+        
+        <div class="step">
+            <h2>1단계: 모델 업로드</h2>
+            <div class="form-group">
+                <label for="modelImage">전신 사진:</label>
+                <input type="file" id="modelImage" accept="image/*">
+            </div>
+            <div class="form-group">
+                <label for="height">키 (cm):</label>
+                <input type="number" id="height" placeholder="예: 170" min="100" max="250">
+            </div>
+            <button onclick="uploadModel()">신체 치수 계산</button>
+            <div id="modelResult" class="result" style="display: none;"></div>
+        </div>
+        
+        <div class="step">
+            <h2>2단계: 옷 업로드</h2>
+            <div class="form-group">
+                <label for="clothingImage">옷 사진:</label>
+                <input type="file" id="clothingImage" accept="image/*">
+            </div>
+            <div class="form-group">
+                <label for="width">폭 (cm) - 선택사항:</label>
+                <input type="number" id="width" placeholder="예: 50" min="0">
+            </div>
+            <div class="form-group">
+                <label for="length">길이 (cm) - 선택사항:</label>
+                <input type="number" id="length" placeholder="예: 65" min="0">
+            </div>
+            <button onclick="uploadClothing()">옷 치수 분석</button>
+            <div id="clothingResult" class="result" style="display: none;"></div>
+        </div>
+        
+        <div class="step">
+            <h2>3단계: 가상 피팅</h2>
+            <button onclick="generateFitting()" id="fittingBtn" disabled>가상 피팅 생성</button>
+            <div id="fittingResult" class="result" style="display: none;"></div>
+        </div>
+    </div>
+
+    <script>
+        let modelId = null;
+        let clothingId = null;
+        
+        // 서버 상태 확인
+        async function checkServerStatus() {
+            try {
+                const response = await fetch('http://localhost:8000/');
+                const statusElement = document.getElementById('serverStatus');
+                const infoElement = document.getElementById('serverInfo');
+                
+                if (response.status === 404) {
+                    statusElement.textContent = '온라인';
+                    statusElement.className = 'status online';
+                    infoElement.textContent = 'API 서버가 정상적으로 실행 중입니다.';
+                } else {
+                    throw new Error('Unexpected response');
+                }
+            } catch (error) {
+                const statusElement = document.getElementById('serverStatus');
+                const infoElement = document.getElementById('serverInfo');
+                statusElement.textContent = '오프라인';
+                statusElement.className = 'status offline';
+                infoElement.textContent = '백엔드 서버가 실행되지 않았습니다. backend 폴더에서 "python3 -m uvicorn main:app --host 0.0.0.0 --port 8000" 명령어를 실행하세요.';
+            }
+        }
+        
+        // 모델 업로드
+        async function uploadModel() {
+            const imageFile = document.getElementById('modelImage').files[0];
+            const height = document.getElementById('height').value;
+            const resultDiv = document.getElementById('modelResult');
+            
+            if (!imageFile || !height) {
+                showError(resultDiv, '이미지와 키를 모두 입력해주세요.');
+                return;
+            }
+            
+            const formData = new FormData();
+            formData.append('image', imageFile);
+            formData.append('height', height);
+            
+            try {
+                showLoading(resultDiv, '신체 치수를 계산하고 있습니다...');
+                
+                const response = await fetch('http://localhost:8000/api/upload-model', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    modelId = data.model_id;
+                    showMeasurements(resultDiv, '계산된 신체 치수', data.measurements);
+                    checkFittingReady();
+                } else {
+                    showError(resultDiv, data.detail || '업로드 실패');
+                }
+            } catch (error) {
+                showError(resultDiv, '서버 연결 오류: ' + error.message);
+            }
+        }
+        
+        // 옷 업로드
+        async function uploadClothing() {
+            const imageFile = document.getElementById('clothingImage').files[0];
+            const width = document.getElementById('width').value;
+            const length = document.getElementById('length').value;
+            const resultDiv = document.getElementById('clothingResult');
+            
+            if (!imageFile) {
+                showError(resultDiv, '옷 이미지를 선택해주세요.');
+                return;
+            }
+            
+            const formData = new FormData();
+            formData.append('image', imageFile);
+            if (width) formData.append('width', width);
+            if (length) formData.append('length', length);
+            
+            try {
+                showLoading(resultDiv, '옷 치수를 분석하고 있습니다...');
+                
+                const response = await fetch('http://localhost:8000/api/upload-clothing', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    clothingId = data.clothing_id;
+                    showMeasurements(resultDiv, '분석된 옷 치수', data.measurements);
+                    checkFittingReady();
+                } else {
+                    showError(resultDiv, data.detail || '업로드 실패');
+                }
+            } catch (error) {
+                showError(resultDiv, '서버 연결 오류: ' + error.message);
+            }
+        }
+        
+        // 가상 피팅 생성
+        async function generateFitting() {
+            const resultDiv = document.getElementById('fittingResult');
+            
+            if (!modelId || !clothingId) {
+                showError(resultDiv, '모델과 옷을 먼저 업로드해주세요.');
+                return;
+            }
+            
+            const formData = new FormData();
+            formData.append('model_id', modelId);
+            formData.append('clothing_id', clothingId);
+            
+            try {
+                showLoading(resultDiv, '가상 피팅 이미지를 생성하고 있습니다...');
+                
+                const response = await fetch('http://localhost:8000/api/virtual-fitting', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    showFittingResult(resultDiv, data.result_image);
+                } else {
+                    showError(resultDiv, data.detail || '가상 피팅 생성 실패');
+                }
+            } catch (error) {
+                showError(resultDiv, '서버 연결 오류: ' + error.message);
+            }
+        }
+        
+        // 유틸리티 함수들
+        function showError(element, message) {
+            element.style.display = 'block';
+            element.innerHTML = `<div class="error">${message}</div>`;
+        }
+        
+        function showSuccess(element, message) {
+            element.style.display = 'block';
+            element.innerHTML = `<div class="success">${message}</div>`;
+        }
+        
+        function showLoading(element, message) {
+            element.style.display = 'block';
+            element.innerHTML = `<div>${message}</div>`;
+        }
+        
+        function showMeasurements(element, title, measurements) {
+            element.style.display = 'block';
+            let html = `<div class="success">${title}</div><div class="measurements">`;
+            
+            for (const [key, value] of Object.entries(measurements)) {
+                const label = getMeasurementLabel(key);
+                html += `
+                    <div class="measurement-item">
+                        <div class="measurement-label">${label}</div>
+                        <div class="measurement-value">${typeof value === 'number' ? value + ' cm' : value}</div>
+                    </div>
+                `;
+            }
+            
+            html += '</div>';
+            element.innerHTML = html;
+        }
+        
+        function showFittingResult(element, imagePath) {
+            element.style.display = 'block';
+            element.innerHTML = `
+                <div class="success">가상 피팅이 완료되었습니다!</div>
+                <img src="http://localhost:8000${imagePath}" alt="Virtual Fitting Result" style="max-width: 100%; margin-top: 15px; border-radius: 6px;">
+            `;
+        }
+        
+        function getMeasurementLabel(key) {
+            const labels = {
+                'shoulder_width': '어깨 너비',
+                'chest_circumference': '가슴 둘레',
+                'waist_circumference': '허리 둘레',
+                'hip_circumference': '엉덩이 둘레',
+                'arm_length': '팔 길이',
+                'leg_length': '다리 길이',
+                'torso_length': '상체 길이',
+                'neck_circumference': '목 둘레',
+                'width': '폭',
+                'length': '길이',
+                'chest': '가슴',
+                'waist': '허리',
+                'hip': '엉덩이',
+                'shoulder': '어깨'
+            };
+            return labels[key] || key;
+        }
+        
+        function checkFittingReady() {
+            const fittingBtn = document.getElementById('fittingBtn');
+            if (modelId && clothingId) {
+                fittingBtn.disabled = false;
+                fittingBtn.textContent = '🎯 가상 피팅 생성';
+            }
+        }
+        
+        // 페이지 로드 시 서버 상태 확인
+        checkServerStatus();
+    </script>
+</body>
+</html>
