@@ -39,16 +39,30 @@ export const uploadClothing = async (imageFile, width = null, length = null, siz
   }
 };
 
-export const createVirtualFitting = async (modelId, clothingId) => {
+export const createVirtualFitting = async (modelId, clothingId, useAdvanced = false) => {
   const formData = new FormData();
   formData.append('model_id', modelId);
   formData.append('clothing_id', clothingId);
+  formData.append('use_advanced', useAdvanced);
 
   try {
     const response = await api.post('/virtual-fitting', formData);
     return response.data;
   } catch (error) {
     throw new Error(error.response?.data?.detail || '가상 피팅 생성에 실패했습니다.');
+  }
+};
+
+export const createAdvancedFitting = async (modelId, clothingId) => {
+  const formData = new FormData();
+  formData.append('model_id', modelId);
+  formData.append('clothing_id', clothingId);
+
+  try {
+    const response = await api.post('/advanced-fitting', formData);
+    return response.data;
+  } catch (error) {
+    throw new Error(error.response?.data?.detail || '향상된 가상 피팅 생성에 실패했습니다.');
   }
 };
 
