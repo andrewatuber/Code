@@ -179,8 +179,9 @@ const ClothingUpload = ({ onClothingUploaded }) => {
         image: selectedFile,
         width: width ? parseFloat(width) : null,
         length: length ? parseFloat(length) : null,
-        sizeChart: parsedSizeChart,
-        selectedSize: selectedSize || null
+        sizeChart: parsedSizeChart, // OCR 결과로 파싱된 모든 사이즈 차트 데이터
+        selectedSize: selectedSize || null, // 현재 선택된 사이즈
+        availableSizes: result.available_sizes || {} // 백엔드에서 받은 전체 사이즈 옵션
       });
     } catch (err) {
       setError(err.message);

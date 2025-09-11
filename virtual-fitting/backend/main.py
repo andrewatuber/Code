@@ -11,8 +11,6 @@ import aiofiles
 from config import settings, create_directories
 from body_measurement import BodyMeasurement
 from clothing_analysis import ClothingAnalysis
-from virtual_fitting import VirtualFitting
-from virtual_fitting_advanced import AdvancedVirtualFitting
 from virtual_fitting_ai import AIVirtualFitting
 from ocr_service import OCRService
 
@@ -33,9 +31,7 @@ create_directories()
 # 인스턴스 생성
 body_measurement = BodyMeasurement()
 clothing_analysis = ClothingAnalysis()
-virtual_fitting = VirtualFitting()
-advanced_fitting = AdvancedVirtualFitting()
-ai_fitting = AIVirtualFitting()
+ai_fitting_engine = AIVirtualFitting() # AI 기반 피팅 인스턴스
 ocr_service = OCRService()
 
 class ModelData(BaseModel):
@@ -111,7 +107,7 @@ async def upload_clothing(
                 pass
         
         # 옷 치수 분석
-        measurements = clothing_analysis.analyze_clothing(
+        measurements_and_sizes = clothing_analysis.analyze_clothing(
             file_path, width, length, chart_data
         )
         
@@ -122,7 +118,8 @@ async def upload_clothing(
             "width": width,
             "length": length,
             "size_chart": chart_data,
-            "measurements": measurements
+            "measurements": measurements_and_sizes.get("selected_measurements", {}), # 기본 측정값
+            "available_sizes": measurements_and_sizes.get("available_sizes", {})
         }
         
         data_path = os.path.join(settings.CLOTHES_DIR, f"{filename}_data.json")
@@ -132,19 +129,20 @@ async def upload_clothing(
         return {
             "success": True,
             "clothing_id": filename,
-            "measurements": measurements
+            "measurements": clothing_data["measurements"],
+            "available_sizes": clothing_data["available_sizes"]
         }
     
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/api/virtual-fitting")
-async def create_virtual_fitting(
+@app.post("/api/ai-fitting") # AI 기반 피팅 엔드포인트로 변경
+async def create_ai_fitting(
     model_id: str = Form(...),
     clothing_id: str = Form(...),
-    use_advanced: bool = Form(False)
+    selected_size: Optional[str] = Form(None) # 선택된 사이즈 파라미터 추가
 ):
-    """가상 피팅 이미지 생성"""
+    """AI 기반 최첨단 가상 피팅 이미지 생성 - 가장 현실적인 결과"""
     try:
         # 모델 데이터 로드
         model_data_path = os.path.join(settings.MODELS_DIR, f"{model_id}_data.json")
@@ -156,61 +154,38 @@ async def create_virtual_fitting(
         async with aiofiles.open(clothing_data_path, 'r') as f:
             clothing_data = json.loads(await f.read())
         
-        # 가상 피팅 생성 (기본 또는 고급)
-        if use_advanced:
-            result_path = advanced_fitting.generate_fitting(
-                model_data, clothing_data
-            )
-        else:
-            result_path = virtual_fitting.generate_fitting(
-                model_data, clothing_data
-            )
+        # 선택된 사이즈가 있다면 clothing_data의 measurements를 업데이트
+        if selected_size and selected_size in clothing_data.get("available_sizes", {}):
+            clothing_data["measurements"] = clothing_data["available_sizes"][selected_size]
+            print(f"Using selected size measurements for {selected_size}: {clothing_data['measurements']}")
+        elif clothing_data.get("available_sizes") and not selected_size:
+            # 선택된 사이즈가 없고 available_sizes가 있으면 첫 번째 사이즈를 기본으로 사용
+            first_size_key = next(iter(clothing_data["available_sizes"]))
+            clothing_data["measurements"] = clothing_data["available_sizes"][first_size_key]            
+            print(f"Using default size measurements for {first_size_key}: {clothing_data['measurements']}")
         
-        return {
-            "success": True,
-            "result_image": f"/api/result/{os.path.basename(result_path)}",
-            "advanced_mode": use_advanced
-        }
-    
-    except FileNotFoundError:
-        raise HTTPException(status_code=404, detail="Model or clothing data not found")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/api/advanced-fitting")
-async def create_advanced_fitting(
-    model_id: str = Form(...),
-    clothing_id: str = Form(...)
-):
-    """향상된 가상 피팅 이미지 생성 - 더 현실적인 결과"""
-    try:
-        # 모델 데이터 로드
-        model_data_path = os.path.join(settings.MODELS_DIR, f"{model_id}_data.json")
-        async with aiofiles.open(model_data_path, 'r') as f:
-            model_data = json.loads(await f.read())
-        
-        # 옷 데이터 로드
-        clothing_data_path = os.path.join(settings.CLOTHES_DIR, f"{clothing_id}_data.json")
-        async with aiofiles.open(clothing_data_path, 'r') as f:
-            clothing_data = json.loads(await f.read())
-        
-        # 향상된 가상 피팅 생성
-        result_path = advanced_fitting.generate_fitting(
+        # AI 가상 피팅 생성
+        result_path = ai_fitting_engine.generate_fitting(
             model_data, clothing_data
         )
         
-        # 피팅 분석 정보도 함께 반환
-        info_path = result_path + "_info.json"
-        fit_info = {}
+        # 피팅 분석 정보 로드
+        info_path = result_path.replace('.jpg', '.jpg_info.json')
+        quality_score = 0
+        ai_features = {}
+        
         if os.path.exists(info_path):
             async with aiofiles.open(info_path, 'r') as f:
                 fit_info = json.loads(await f.read())
+                quality_score = fit_info.get("quality_score", 0)
+                ai_features = fit_info.get("ai_features", {})
         
         return {
             "success": True,
             "result_image": f"/api/result/{os.path.basename(result_path)}",
-            "fit_analysis": fit_info.get("fit_analysis", {}),
-            "advanced_features": fit_info.get("advanced_features", {})
+            "quality_score": quality_score,
+            "ai_features": ai_features,
+            "description": "AI 기반 최첨단 가상 피팅 결과"
         }
     
     except FileNotFoundError:
@@ -276,52 +251,6 @@ async def extract_size_from_chart(
         # 임시 파일 정리
         if 'temp_path' in locals() and os.path.exists(temp_path):
             os.remove(temp_path)
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/api/ai-fitting")
-async def create_ai_fitting(
-    model_id: str = Form(...),
-    clothing_id: str = Form(...)
-):
-    """AI 기반 최첨단 가상 피팅 - 가장 현실적인 결과"""
-    try:
-        # 모델 데이터 로드
-        model_data_path = os.path.join(settings.MODELS_DIR, f"{model_id}_data.json")
-        async with aiofiles.open(model_data_path, 'r') as f:
-            model_data = json.loads(await f.read())
-        
-        # 옷 데이터 로드
-        clothing_data_path = os.path.join(settings.CLOTHES_DIR, f"{clothing_id}_data.json")
-        async with aiofiles.open(clothing_data_path, 'r') as f:
-            clothing_data = json.loads(await f.read())
-        
-        # AI 가상 피팅 생성
-        result_path = ai_fitting.generate_fitting(
-            model_data, clothing_data
-        )
-        
-        # 피팅 분석 정보 로드
-        info_path = result_path.replace('.jpg', '.jpg_info.json')
-        quality_score = 0
-        ai_features = {}
-        
-        if os.path.exists(info_path):
-            async with aiofiles.open(info_path, 'r') as f:
-                fit_info = json.loads(await f.read())
-                quality_score = fit_info.get("quality_score", 0)
-                ai_features = fit_info.get("ai_features", {})
-        
-        return {
-            "success": True,
-            "result_image": f"/api/result/{os.path.basename(result_path)}",
-            "quality_score": quality_score,
-            "ai_features": ai_features,
-            "description": "AI 기반 최첨단 가상 피팅 결과"
-        }
-    
-    except FileNotFoundError:
-        raise HTTPException(status_code=404, detail="Model or clothing data not found")
-    except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/clothes")

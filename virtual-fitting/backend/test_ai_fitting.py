@@ -6,8 +6,6 @@ AI 기반 가상 피팅 테스트
 
 import json
 import os
-from virtual_fitting import VirtualFitting
-from virtual_fitting_advanced import AdvancedVirtualFitting
 from virtual_fitting_ai import AIVirtualFitting
 from config import settings
 import time
@@ -33,87 +31,74 @@ def compare_all_methods():
     with open(model_data_path, 'r') as f:
         model_data = json.load(f)
     
+    # 옷 데이터 로드 (수정 가능성을 위해 복사본 사용)
     with open(clothing_data_path, 'r') as f:
-        clothing_data = json.load(f)
+        original_clothing_data = json.load(f)
     
     print("="*60)
     print("🎯 가상 피팅 시스템 비교 테스트")
     print("="*60)
     print(f"모델: {model_files[0]}")
-    print(f"옷: {clothing_files[0]}")
+    print(f"옷: {clothing_files[0]} (원본)")
     print()
     
     results = {}
     
-    # 1. 기본 피팅
-    print("1️⃣ 기본 가상 피팅...")
-    basic_fitting = VirtualFitting()
+    # 1. AI 기반 피팅 (기본 옷 데이터 사용)
+    print("1️⃣ AI 기반 피팅 (기본 옷 치수)...")
+    ai_fitting_default = AIVirtualFitting()
+    clothing_data_default = original_clothing_data.copy()
     start_time = time.time()
     try:
-        basic_result = basic_fitting.generate_fitting(model_data, clothing_data)
-        basic_time = time.time() - start_time
-        results['basic'] = {
-            'path': basic_result,
-            'time': basic_time,
+        ai_result_default = ai_fitting_default.generate_fitting(model_data, clothing_data_default)
+        ai_time_default = time.time() - start_time
+        results['ai_default'] = {
+            'path': ai_result_default,
+            'time': ai_time_default,
             'status': '✅ 성공'
         }
-        print(f"   완료! (처리 시간: {basic_time:.2f}초)")
+        info_path = ai_result_default.replace('.jpg', '.jpg_info.json')
+        if os.path.exists(info_path):
+            with open(info_path, 'r') as f: info = json.load(f)
+            print(f"   품질 점수: {info.get('quality_score', 0):.1f}%")
+        print(f"   완료! (처리 시간: {ai_time_default:.2f}초)")
     except Exception as e:
-        results['basic'] = {'status': f'❌ 실패: {e}'}
+        results['ai_default'] = {'status': f'❌ 실패: {e}'}
         print(f"   실패: {e}")
     
     print()
     
-    # 2. 향상된 피팅
-    print("2️⃣ 향상된 가상 피팅...")
-    advanced_fitting = AdvancedVirtualFitting()
+    # 2. AI 기반 피팅 (사이즈 차트 & 특정 사이즈 선택)
+    print("2️⃣ AI 기반 피팅 (사이즈 차트: Large 선택)...")
+    clothing_data_large = original_clothing_data.copy()
+    # 테스트를 위한 사이즈 차트 데이터 추가 (실제 OCR 결과와 유사하게)
+    clothing_data_large["available_sizes"] = {
+        "Small": {"chest": 45.0, "waist": 40.0, "length": 60.0, "shoulder": 38.0},
+        "Medium": {"chest": 50.0, "waist": 45.0, "length": 65.0, "shoulder": 42.0},
+        "Large": {"chest": 55.0, "waist": 50.0, "length": 70.0, "shoulder": 46.0}
+    }
+    clothing_data_large["measurements"] = clothing_data_large["available_sizes"]["Large"]
+    clothing_data_large["selected_size"] = "Large"
+    
+    ai_fitting_large = AIVirtualFitting()
     start_time = time.time()
     try:
-        advanced_result = advanced_fitting.generate_fitting(model_data, clothing_data)
-        advanced_time = time.time() - start_time
-        results['advanced'] = {
-            'path': advanced_result,
-            'time': advanced_time,
+        ai_result_large = ai_fitting_large.generate_fitting(model_data, clothing_data_large)
+        ai_time_large = time.time() - start_time
+        results['ai_large'] = {
+            'path': ai_result_large,
+            'time': ai_time_large,
             'status': '✅ 성공'
         }
-        print(f"   완료! (처리 시간: {advanced_time:.2f}초)")
-        
-        # 피팅 점수 읽기
-        info_path = advanced_result + "_info.json"
+        info_path = ai_result_large.replace('.jpg', '.jpg_info.json')
         if os.path.exists(info_path):
-            with open(info_path, 'r') as f:
-                info = json.load(f)
-                if 'fit_analysis' in info and 'fit_score' in info['fit_analysis']:
-                    print(f"   피팅 점수: {info['fit_analysis']['fit_score']}%")
+            with open(info_path, 'r') as f: info = json.load(f)
+            print(f"   품질 점수: {info.get('quality_score', 0):.1f}%")
+            print(f"   사용된 사이즈: {info.get('clothing_data', {}).get('selected_size', 'N/A')}")
+            print(f"   사용된 치수: {info.get('clothing_data', {}).get('measurements', 'N/A')}")
+        print(f"   완료! (처리 시간: {ai_time_large:.2f}초)")
     except Exception as e:
-        results['advanced'] = {'status': f'❌ 실패: {e}'}
-        print(f"   실패: {e}")
-    
-    print()
-    
-    # 3. AI 기반 피팅
-    print("3️⃣ AI 기반 최첨단 가상 피팅...")
-    ai_fitting = AIVirtualFitting()
-    start_time = time.time()
-    try:
-        ai_result = ai_fitting.generate_fitting(model_data, clothing_data)
-        ai_time = time.time() - start_time
-        results['ai'] = {
-            'path': ai_result,
-            'time': ai_time,
-            'status': '✅ 성공'
-        }
-        print(f"   완료! (처리 시간: {ai_time:.2f}초)")
-        
-        # 품질 점수 읽기
-        info_path = ai_result + "_info.json"
-        if os.path.exists(info_path):
-            with open(info_path, 'r') as f:
-                info = json.load(f)
-                if 'quality_score' in info:
-                    print(f"   품질 점수: {info['quality_score']:.1f}%")
-    except Exception as e:
-        results['ai'] = {'status': f'❌ 실패: {e}'}
+        results['ai_large'] = {'status': f'❌ 실패: {e}'}
         print(f"   실패: {e}")
     
     # 결과 요약
@@ -121,19 +106,30 @@ def compare_all_methods():
     print("📊 결과 요약")
     print("="*60)
     
-    print("\n| 방법 | 상태 | 처리 시간 | 결과 파일 |")
-    print("|------|------|-----------|-----------|")
+    print("\n| 방법         | 상태   | 처리 시간 | 품질 점수 | 사용된 사이즈 | 결과 파일 |")
+    print("|--------------|--------|-----------|-----------|---------------|-----------|")
     
     for method, data in results.items():
         status = data.get('status', '?')
         time_str = f"{data.get('time', 0):.2f}초" if 'time' in data else '-'
         path = os.path.basename(data.get('path', '-')) if 'path' in data else '-'
-        print(f"| {method:8} | {status} | {time_str:9} | {path} |")
-    
-    print("\n💡 특징 비교:")
-    print("• 기본: 빠른 처리, 기본적인 합성")
-    print("• 향상된: 3D 워핑, 조명 매칭, 피팅 분석")
-    print("• AI: 지능형 워핑, 고급 블렌딩, 품질 평가")
+        quality_score = "N/A"
+        selected_size_display = "N/A"
+        
+        if method == 'ai_default':
+            info_path = data.get('path', '').replace('.jpg', '.jpg_info.json')
+            if os.path.exists(info_path):
+                with open(info_path, 'r') as f: info = json.load(f)
+                quality_score = f"{info.get('quality_score', 0):.1f}%"
+                selected_size_display = info.get('clothing_data', {}).get('selected_size', '기본')
+        elif method == 'ai_large':
+            info_path = data.get('path', '').replace('.jpg', '.jpg_info.json')
+            if os.path.exists(info_path):
+                with open(info_path, 'r') as f: info = json.load(f)
+                quality_score = f"{info.get('quality_score', 0):.1f}%"
+                selected_size_display = info.get('clothing_data', {}).get('selected_size', 'Large')
+        
+        print(f"| {method:12} | {status:6} | {time_str:9} | {quality_score:9} | {selected_size_display:13} | {path} |")
     
     print("\n✨ 결과 이미지는 'results' 폴더에서 확인하세요!")
 

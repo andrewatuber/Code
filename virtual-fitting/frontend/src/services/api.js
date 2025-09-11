@@ -29,7 +29,7 @@ export const uploadClothing = async (imageFile, width = null, length = null, siz
   
   if (width) formData.append('width', width);
   if (length) formData.append('length', length);
-  if (sizeChart) formData.append('size_chart', JSON.stringify(sizeChart));
+  if (sizeChart) formData.append('size_chart', JSON.stringify(sizeChart)); // sizes 객체를 포함할 수 있음
 
   try {
     const response = await api.post('/upload-clothing', formData);
@@ -39,30 +39,17 @@ export const uploadClothing = async (imageFile, width = null, length = null, siz
   }
 };
 
-export const createVirtualFitting = async (modelId, clothingId, useAdvanced = false) => {
+export const createAIFitting = async (modelId, clothingId, selectedSize = null) => {
   const formData = new FormData();
   formData.append('model_id', modelId);
   formData.append('clothing_id', clothingId);
-  formData.append('use_advanced', useAdvanced);
+  if (selectedSize) formData.append('selected_size', selectedSize); // 선택된 사이즈 추가
 
   try {
-    const response = await api.post('/virtual-fitting', formData);
+    const response = await api.post('/ai-fitting', formData); // AI 피팅 엔드포인트 호출
     return response.data;
   } catch (error) {
-    throw new Error(error.response?.data?.detail || '가상 피팅 생성에 실패했습니다.');
-  }
-};
-
-export const createAdvancedFitting = async (modelId, clothingId) => {
-  const formData = new FormData();
-  formData.append('model_id', modelId);
-  formData.append('clothing_id', clothingId);
-
-  try {
-    const response = await api.post('/advanced-fitting', formData);
-    return response.data;
-  } catch (error) {
-    throw new Error(error.response?.data?.detail || '향상된 가상 피팅 생성에 실패했습니다.');
+    throw new Error(error.response?.data?.detail || 'AI 기반 가상 피팅 생성에 실패했습니다.');
   }
 };
 

@@ -14,7 +14,8 @@ class ClothingAnalysis:
         image_path: str, 
         width: Optional[float] = None, 
         length: Optional[float] = None,
-        size_chart: Optional[Dict[str, Any]] = None
+        size_chart: Optional[Dict[str, Any]] = None,
+        selected_size: Optional[str] = None # 추가된 파라미터
     ) -> Dict[str, float]:
         """옷 이미지를 분석하여 각 부위의 치수를 계산합니다."""
         
@@ -28,7 +29,18 @@ class ClothingAnalysis:
         
         # 사이즈 차트가 있으면 우선 사용
         if size_chart:
-            measurements = self._parse_size_chart(size_chart, clothing_type)
+            parsed_chart_data = self._parse_size_chart(size_chart, clothing_type)
+            if selected_size and selected_size in parsed_chart_data.get("available_sizes", {}):
+                measurements = parsed_chart_data["available_sizes"][selected_size]
+            else:
+                # 선택된 사이즈가 없거나 유효하지 않으면 첫 번째 사이즈 또는 기본값 사용
+                if parsed_chart_data.get("available_sizes"):
+                    first_size_key = next(iter(parsed_chart_data["available_sizes"]))
+                    measurements = parsed_chart_data["available_sizes"][first_size_key]
+                else:
+                    measurements = self._calculate_from_dimensions(
+                        clothing_type, width, length
+                    )
         else:
             # 입력된 치수를 기반으로 다른 치수들 계산
             measurements = self._calculate_from_dimensions(
@@ -136,32 +148,17 @@ class ClothingAnalysis:
     
     def _parse_size_chart(self, size_chart: Dict[str, Any], clothing_type: str) -> Dict[str, float]:
         """사이즈 차트를 파싱하여 치수 정보를 추출합니다."""
-        measurements = {}
-        
-        # 사이즈 차트에서 치수 정보 추출
-        for key, value in size_chart.items():
-            try:
-                # 숫자 값 추출
-                if isinstance(value, (int, float)):
-                    measurements[key.lower()] = float(value)
-                elif isinstance(value, str):
-                    # 문자열에서 숫자 추출
-                    import re
-                    numbers = re.findall(r'\d+\.?\d*', value)
-                    if numbers:
-                        measurements[key.lower()] = float(numbers[0])
-            except (ValueError, TypeError):
-                continue
+        all_sizes_measurements = {"available_sizes": {}}
         
         # 표준 키 이름으로 매핑
         key_mapping = {
-            "가슴둘레": "chest",
-            "허리둘레": "waist", 
-            "엉덩이둘레": "hip",
-            "어깨너비": "shoulder",
-            "소매길이": "sleeve",
-            "총길이": "length",
-            "총폭": "width",
+            "가슴둘레": "chest", "가슴": "chest",
+            "허리둘레": "waist", "허리": "waist",
+            "엉덩이둘레": "hip", "엉덩이": "hip",
+            "어깨너비": "shoulder", "어깨": "shoulder",
+            "소매길이": "sleeve", "소매": "sleeve",
+            "총길이": "length", "기장": "length",
+            "총폭": "width", "단면폭": "width", "총장": "length",
             "chest_circumference": "chest",
             "waist_circumference": "waist",
             "hip_circumference": "hip",
@@ -171,12 +168,29 @@ class ClothingAnalysis:
             "total_width": "width"
         }
         
-        normalized_measurements = {}
-        for key, value in measurements.items():
-            mapped_key = key_mapping.get(key, key)
-            normalized_measurements[mapped_key] = value
+        # OCR 서비스에서 반환된 'sizes' 키를 기반으로 파싱
+        if "sizes" in size_chart and isinstance(size_chart["sizes"], dict):
+            for size_name, raw_measurements in size_chart["sizes"].items():
+                current_size_measurements = {}
+                for key, value in raw_measurements.items():
+                    mapped_key = key_mapping.get(key.lower(), key.lower())
+                    try:
+                        current_size_measurements[mapped_key] = float(value)
+                    except (ValueError, TypeError):
+                        pass # 숫자로 변환할 수 없는 값은 무시
+                all_sizes_measurements["available_sizes"][size_name] = current_size_measurements
+        elif "measurements" in size_chart and isinstance(size_chart["measurements"], dict):
+            # 단일 사이즈 정보인 경우 (이전 버전 호환성)
+            single_size_measurements = {}
+            for key, value in size_chart["measurements"].items():
+                mapped_key = key_mapping.get(key.lower(), key.lower())
+                try:
+                    single_size_measurements[mapped_key] = float(value)
+                except (ValueError, TypeError):
+                    pass
+            all_sizes_measurements["available_sizes"]["default"] = single_size_measurements
         
-        return normalized_measurements
+        return all_sizes_measurements # 모든 사이즈 정보를 반환하도록 변경
     
     def _analyze_image_proportions(self, image: np.ndarray, clothing_type: str) -> Dict[str, float]:
         """이미지 분석을 통해 비례 관계를 파악합니다."""

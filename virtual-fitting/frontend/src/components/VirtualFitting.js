@@ -1,19 +1,17 @@
 import React, { useState } from 'react';
-import { createVirtualFitting, createAdvancedFitting } from '../services/api';
+import { createAIFitting } from '../services/api';
 
 const VirtualFitting = ({ model, clothing, onFittingComplete }) => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const [useAdvanced, setUseAdvanced] = useState(true); // 기본값을 향상된 모드로 설정
+  const [selectedClothingSize, setSelectedClothingSize] = useState(clothing.selectedSize || Object.keys(clothing.availableSizes || {})[0] || '');
 
   const handleGenerateFitting = async () => {
     setLoading(true);
     setError('');
 
     try {
-      const result = useAdvanced 
-        ? await createAdvancedFitting(model.id, clothing.id)
-        : await createVirtualFitting(model.id, clothing.id, false);
+      const result = await createAIFitting(model.id, clothing.id, selectedClothingSize);
       onFittingComplete(result);
     } catch (err) {
       setError(err.message);
@@ -47,6 +45,11 @@ const VirtualFitting = ({ model, clothing, onFittingComplete }) => {
   };
 
   const fitPredictions = getFitPrediction();
+  
+  // 선택된 사이즈에 따른 옷의 실제 측정값 (표시용)
+  const displayedClothingMeasurements = selectedClothingSize && clothing.availableSizes && clothing.availableSizes[selectedClothingSize]
+    ? clothing.availableSizes[selectedClothingSize]
+    : clothing.measurements; 
 
   return (
     <div className="card">
@@ -93,13 +96,35 @@ const VirtualFitting = ({ model, clothing, onFittingComplete }) => {
               {clothing.type && (
                 <p><strong>종류:</strong> {getClothingTypeLabel(clothing.type)}</p>
               )}
-              {clothing.width && <p><strong>폭:</strong> {clothing.width} cm</p>}
-              {clothing.length && <p><strong>길이:</strong> {clothing.length} cm</p>}
+              
+              {/* 사이즈 선택 드롭다운 */}
+              {clothing.availableSizes && Object.keys(clothing.availableSizes).length > 1 && (
+                <div className="form-group" style={{ marginBottom: '15px' }}>
+                  <label className="form-label" htmlFor="clothingSize">사이즈 선택:</label>
+                  <select
+                    id="clothingSize"
+                    className="form-input"
+                    value={selectedClothingSize}
+                    onChange={(e) => setSelectedClothingSize(e.target.value)}
+                    disabled={loading}
+                  >
+                    {Object.keys(clothing.availableSizes).map(sizeOption => (
+                      <option key={sizeOption} value={sizeOption}>
+                        {sizeOption}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+              
+              {displayedClothingMeasurements.width && <p><strong>폭:</strong> {displayedClothingMeasurements.width} cm</p>}
+              {displayedClothingMeasurements.length && <p><strong>길이:</strong> {displayedClothingMeasurements.length} cm</p>}
+              
               <div className="measurements-summary">
                 <h4>분석된 치수</h4>
-                {clothing.measurements && (
+                {displayedClothingMeasurements && (
                   <div className="measurements-grid">
-                    {Object.entries(clothing.measurements)
+                    {Object.entries(displayedClothingMeasurements)
                       .filter(([key]) => ['chest', 'waist', 'width', 'length'].includes(key))
                       .map(([key, value]) => (
                         <div key={key} className="measurement-item">
@@ -143,29 +168,6 @@ const VirtualFitting = ({ model, clothing, onFittingComplete }) => {
 
       {error && <div className="error">{error}</div>}
 
-      <div className="fitting-options">
-        <label className="checkbox-label">
-          <input
-            type="checkbox"
-            checked={useAdvanced}
-            onChange={(e) => setUseAdvanced(e.target.checked)}
-            disabled={loading}
-          />
-          <span>향상된 피팅 모드 사용 (더 현실적인 결과)</span>
-        </label>
-        <div className="mode-description">
-          {useAdvanced ? (
-            <p className="text-muted">
-              ✨ 고급 기능: 3D 워핑, 신체 세그멘테이션, 조명 매칭, 텍스처 보존
-            </p>
-          ) : (
-            <p className="text-muted">
-              기본 모드: 빠른 처리 속도
-            </p>
-          )}
-        </div>
-      </div>
-
       <div className="fitting-actions">
         <button 
           className="btn btn-primary btn-large"
@@ -175,10 +177,10 @@ const VirtualFitting = ({ model, clothing, onFittingComplete }) => {
           {loading ? (
             <>
               <div className="spinner"></div>
-              {useAdvanced ? '향상된 피팅 생성 중...' : '가상 피팅 생성 중...'}
+              AI 기반 피팅 생성 중...
             </>
           ) : (
-            <>🎯 {useAdvanced ? '향상된 가상 피팅 생성' : '가상 피팅 생성'}</>
+            '🎯 AI 기반 가상 피팅 생성'
           )}
         </button>
       </div>
