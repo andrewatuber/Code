@@ -129,6 +129,85 @@ def normalize_tile_name(tile):
     return tile
 
 
+def get_tile_base_name(tile):
+    """패의 기본 이름 추출 - 중복 로직 통합"""
+    if not tile:
+        return ""
+    
+    # .png 제거
+    base_name = tile.replace('.png', '') if tile.endswith('.png') else tile
+    
+    # _숫자 부분 제거 (복사본 번호 제거)
+    if '_' in base_name:
+        base_name = base_name.split('_')[0]
+    
+    return base_name
+
+
+def extract_meld_tile_base(meld):
+    """멜드에서 타일 기본 이름 추출 - 중복 로직 통합"""
+    if 'tile' in meld:
+        return get_tile_base_name(meld['tile'])
+    elif 'tiles' in meld and meld['tiles']:
+        return get_tile_base_name(meld['tiles'][0])
+    else:
+        return ""
+
+
+def convert_melds_to_virtual_tiles(melds):
+    """멜드를 가상 패로 변환 - 중복 로직 통합"""
+    virtual_tiles = []
+    
+    for meld in melds:
+        if meld['type'] in ['peng', 'ming_gang', 'an_gang', 'jia_gang']:
+            tile_base = extract_meld_tile_base(meld)
+            if tile_base:
+                if meld['type'] in ['ming_gang', 'an_gang', 'jia_gang']:
+                    # 깡은 4장이지만 화료 체크에서는 3장으로 계산
+                    virtual_tiles.extend([tile_base + '_1.png'] * 3)
+                else:
+                    # 펑은 3장
+                    virtual_tiles.extend([tile_base + '_1.png'] * 3)
+    
+    return virtual_tiles
+
+
+def init_player_game_data():
+    """플레이어별 게임 데이터 초기화 - 중복 로직 통합"""
+    return {
+        'hands': [[] for _ in range(4)],
+        'discard_piles': [[] for _ in range(4)],
+        'flower_tiles': [[] for _ in range(4)],
+        'melds': [[] for _ in range(4)]
+    }
+
+
+def init_game_flags():
+    """게임 플래그들 초기화 - 중복 로직 통합"""
+    return {
+        'pending_action': None,
+        'pending_tile': None,
+        'pending_player': None,
+        'action_choices': [],
+        'last_discard_player': None,
+        'after_peng': False,
+        'waiting_for_animation': False,
+        'animation_callback': None,
+        'discard_animations': [],
+        'winning_dialog_active': False,
+        'winning_yaku_info': None,
+        'winning_player_idx': None,
+        'winning_result_type': None,
+        'tenpai_dialog_active': False,
+        'tenpai_waiting_tiles': [],
+        'player_tenpai_state': False,
+        'tenpai_dialog_shown': False,
+        'last_tenpai_tiles': [],
+        'tenpai_options': [],
+        'last_tenpai_options': []
+    }
+
+
 def count_tile_groups(hand):
     """손패에서 각 패의 개수 계산"""
     tile_count = {}
@@ -271,13 +350,18 @@ def analyze_hand_composition(hand):
     }
 
 
-def check_yaku(hand, is_tsumo=False, is_menzen=True, player_wind="동", round_wind="동", flower_count=0):
+def check_yaku(hand, is_tsumo=False, is_menzen=True, player_wind="동", round_wind="동", flower_count=0, debug=False):
     """역(役) 체크 - 한국 마작 기준"""
     yaku_list = []
     tile_count = count_tile_groups(hand)
     analysis = analyze_hand_composition(hand)
     
-    # 기본 역들
+    if debug:
+        print(f"🔍 역 체크 시작: 손패={len(hand)}장, 쯔모={is_tsumo}, 멘젠={is_menzen}")
+        print(f"🔍 패 구성: {tile_count}")
+        print(f"🔍 분석: 트리플렛={len(analysis['triplets'])}, 쌍={len(analysis['pairs'])}")
+    
+    # 기본 역들 - 멘젠쯔모는 점수 계산에서 별도 처리하므로 역 목록에만 추가
     if is_tsumo and is_menzen:
         yaku_list.append("멘젠쯔모")
     
@@ -382,10 +466,26 @@ def check_yaku(hand, is_tsumo=False, is_menzen=True, player_wind="동", round_wi
         if is_menzen:
             yaku_list.append("삼앙꼬")  # 4점 (멘젠일 때만)
     
-    # 칠대작 (7가지 서로 다른 자패)
+    # 칠대작 (7가지 서로 다른 자패) 또는 7쌍 패턴
     honor_types = sum(1 for tile in ["동", "남", "서", "북", "중", "발", "백"] if tile_count.get(tile, 0) > 0)
+    
+    # 7쌍 패턴 체크 (7가지 서로 다른 패가 각각 2장씩)
+    is_seven_pairs = (len(tile_count) == 7 and 
+                     all(count == 2 for count in tile_count.values()) and
+                     sum(tile_count.values()) == 14)
+    
+    if debug:
+        print(f"🔍 7쌍 체크: 패종류={len(tile_count)}, 모든패2장={all(count == 2 for count in tile_count.values()) if tile_count else False}, 총14장={sum(tile_count.values()) == 14 if tile_count else False}")
+        print(f"🔍 자패종류={honor_types}, 7쌍패턴={is_seven_pairs}")
+    
     if honor_types == 7:
-        yaku_list.append("칠대작")  # 4점
+        yaku_list.append("칠대작")  # 4점 (7가지 서로 다른 자패)
+        if debug:
+            print(f"🎯 칠대작 (7가지 자패) 추가!")
+    elif is_seven_pairs:
+        yaku_list.append("칠대작")  # 4점 (7쌍 패턴)
+        if debug:
+            print(f"🎯 칠대작 (7쌍 패턴) 추가!")
     
     # 부지부 (문전청 + 쯔모)
     if is_menzen and is_tsumo and not yaku_list:
@@ -394,11 +494,14 @@ def check_yaku(hand, is_tsumo=False, is_menzen=True, player_wind="동", round_wi
     # 특수 화료 (천화, 지화, 인화는 게임 로직에서 별도 처리 필요)
     # 구려보등 (9연보등)도 별도 처리 필요
     
+    if debug:
+        print(f"🔍 역 체크 완료: {yaku_list} (총 {len(yaku_list)}개)")
+    
     return yaku_list
 
 
-def calculate_korean_mahjong_points(yaku_list, flower_count=0, is_tsumo=False, is_menzen=True):
-    """한국 마작 점수 계산 - 정확한 점수표"""
+def calculate_korean_mahjong_points(yaku_list, flower_count=0, is_tsumo=False, is_menzen=True, gensho_count=0):
+    """한국 마작 점수 계산 - 정확한 점수표 (겐쇼 포함)"""
     # 기본 점수 설정
     if is_tsumo:
         base_points = 10  # 쯔모: 10점
@@ -409,6 +512,8 @@ def calculate_korean_mahjong_points(yaku_list, flower_count=0, is_tsumo=False, i
     
     # 역별 점수 (한국 마작 기준)
     yaku_points = 0
+    menzen_tsumo_bonus = 0  # 멘젠쯔모 별도 처리
+    
     for yaku in yaku_list:
         if "탕야오" in yaku or "핀후" in yaku:
             yaku_points += 1
@@ -429,17 +534,38 @@ def calculate_korean_mahjong_points(yaku_list, flower_count=0, is_tsumo=False, i
         elif "자풍" in yaku or "장풍" in yaku or "역패" in yaku:
             yaku_points += 1
         elif "멘젠쯔모" in yaku:
-            yaku_points += 1
+            # 멘젠쯔모는 별도 처리하므로 여기서는 0점
+            menzen_tsumo_bonus = 2  # 별도 변수로 관리
         else:
             yaku_points += 1  # 기타 역들
     
     # 꽃패 보너스: 1장당 1점
     flower_bonus = flower_count
     
+    # 겐쇼 보너스: 쯔모한 패 개수만큼 (쯔모일 때만)
+    gensho_bonus = gensho_count if is_tsumo else 0
+    
     # 총 점수
-    total_points = base_points + yaku_points + flower_bonus
+    total_points = base_points + yaku_points + menzen_tsumo_bonus + flower_bonus + gensho_bonus
     
     return total_points
+
+
+def calculate_gensho_count(hand, melds, is_tsumo=False):
+    """겐쇼 점수 계산 - 쯔모한 패 개수 (자뽑 개수)"""
+    if not is_tsumo:
+        return 0
+    
+    # 쯔모한 패는 마지막에 뽑은 패 1개 (기본)
+    # 추가로 깡을 통해 뽑은 보충패들도 포함
+    gensho_count = 1  # 마지막 쯔모패
+    
+    # 깡 멜드 개수만큼 보충패를 뽑았으므로 추가
+    for meld in melds:
+        if meld['type'] in ['an_gang', 'ming_gang', 'jia_gang']:
+            gensho_count += 1
+    
+    return gensho_count
 
 
 def calculate_yaku_points(yaku_list):
@@ -447,18 +573,84 @@ def calculate_yaku_points(yaku_list):
     return len(yaku_list)
 
 
-def is_winning_hand(hand, is_tsumo=False, is_menzen=True, player_wind="동", round_wind="동", flower_count=0):
-    """화료 가능 여부 체크"""
-    # 기본 패턴 체크 (순자 포함)
-    is_valid, message = check_basic_pattern(hand)
+def check_seven_pairs_pattern(hand):
+    """7쌍 패턴 체크 - 7가지 서로 다른 패가 각각 2장씩"""
+    if len(hand) != 14:
+        return False, "패 수가 14장이 아닙니다."
     
-    if not is_valid:
+    tile_count = count_tile_groups(hand)
+    
+    # 모든 패가 정확히 2장씩 있어야 함 (7쌍)
+    pairs = [tile for tile, count in tile_count.items() if count == 2]
+    
+    # 7쌍이어야 하고, 다른 개수의 패가 있으면 안됨
+    if len(pairs) == 7 and len(tile_count) == 7:
+        # 모든 패가 정확히 2장씩인지 확인
+        total_tiles = sum(tile_count.values())
+        if total_tiles == 14:
+            return True, f"7쌍 화료! 쌍: {pairs}"
+    
+    return False, f"7쌍 실패 - 쌍의 개수: {len(pairs)}, 전체 패 종류: {len(tile_count)}"
+
+
+def check_six_pairs_waiting(hand):
+    """6쌍 + 1장 대기 상태 체크 - 론을 위한 7쌍 간방"""
+    if len(hand) != 13:
+        return False, []
+    
+    tile_count = count_tile_groups(hand)
+    
+    # 6개의 쌍과 1개의 단독패가 있어야 함
+    pairs = [tile for tile, count in tile_count.items() if count == 2]
+    singles = [tile for tile, count in tile_count.items() if count == 1]
+    
+    # 정확히 6쌍 + 1장이어야 하고, 다른 개수의 패가 있으면 안됨
+    if len(pairs) == 6 and len(singles) == 1 and len(tile_count) == 7:
+        # 총 패 수 확인 (6*2 + 1 = 13)
+        total_tiles = sum(tile_count.values())
+        if total_tiles == 13:
+            # 단독패와 같은 패를 받으면 7쌍 완성
+            waiting_tile = singles[0]
+            return True, [waiting_tile]
+    
+    return False, []
+
+
+def can_complete_seven_pairs_with_tile(hand, tile):
+    """특정 패를 받아서 7쌍을 완성할 수 있는지 체크"""
+    # 13장 + 1장(론패) = 14장으로 7쌍 체크
+    temp_hand = hand + [tile]
+    is_valid, message = check_seven_pairs_pattern(temp_hand)
+    return is_valid
+
+
+def is_winning_hand(hand, is_tsumo=False, is_menzen=True, player_wind="동", round_wind="동", flower_count=0, debug=False):
+    """화료 가능 여부 체크"""
+    if debug:
+        print(f"🔍 화료 체크 시작: 손패={len(hand)}장, 쯔모={is_tsumo}, 멘젠={is_menzen}")
+    
+    # 1. 기본 패턴 체크 (4 몸통 + 1 머리)
+    is_valid_basic, message_basic = check_basic_pattern(hand)
+    if debug:
+        print(f"🔍 기본 패턴: {is_valid_basic} - {message_basic}")
+    
+    # 2. 7쌍 패턴 체크
+    is_valid_seven_pairs, message_seven_pairs = check_seven_pairs_pattern(hand)
+    if debug:
+        print(f"🔍 7쌍 패턴: {is_valid_seven_pairs} - {message_seven_pairs}")
+    
+    # 둘 중 하나라도 유효하면 패턴은 통과
+    if not is_valid_basic and not is_valid_seven_pairs:
+        if debug:
+            print(f"🚫 화료 실패: 패턴이 맞지 않음")
         return False
     
     # 역 체크 (꽃패 포함)
-    yaku_list = check_yaku(hand, is_tsumo, is_menzen, player_wind, round_wind, flower_count)
+    yaku_list = check_yaku(hand, is_tsumo, is_menzen, player_wind, round_wind, flower_count, debug)
     
     if not yaku_list:
+        if debug:
+            print(f"🚫 화료 실패: 역이 없음")
         return False
     
     # 멘젠이 깨진 상태에서는 최소 2점 이상이어야 화료 가능
@@ -469,8 +661,12 @@ def is_winning_hand(hand, is_tsumo=False, is_menzen=True, player_wind="동", rou
         
         # 멘젠이 깨진 상태에서는 역 점수가 최소 2점 이상이어야 함
         if actual_yaku_points < 2:
+            if debug:
+                print(f"🚫 화료 실패: 멘젠 깨진 상태에서 역 점수 부족 ({actual_yaku_points}점 < 2점)")
             return False
     
+    if debug:
+        print(f"✅ 화료 성공! 역={len(yaku_list)}개, 패턴={'7쌍' if is_valid_seven_pairs else '기본'}")
     return True
 
 
