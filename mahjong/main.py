@@ -586,6 +586,16 @@ class MahjongGame:
                 return screen_pos
         return None
 
+    def get_meld_tile_count(self, player_idx):
+        """멜드에 포함된 타일 수 계산 (깡은 4장, 나머지는 3장)"""
+        meld_tiles = 0
+        for m in self.melds[player_idx]:
+            if m['type'] in ('ming_gang', 'an_gang', 'jia_gang'):
+                meld_tiles += 4
+            else:
+                meld_tiles += 3
+        return meld_tiles
+
     def start_new_game(self):
         """새로운 게임 시작"""
         print(f"=== 새로운 마작 게임 시작 ({self.current_game}/{self.total_games}판) ===")
@@ -1014,10 +1024,11 @@ class MahjongGame:
         
         # 멜드를 고려한 예상 손패 수 계산 (한국 마작 규칙)
         # 기본: 13장 + 뽑은패 1장 = 14장 → 1장 버리기 → 13장
-        # 멜드 1개: 13 - 3 = 10장 + 뽑은패 1장 = 11장 → 1장 버리기 → 10장  
-        # 멜드 2개: 13 - 6 = 7장 + 뽑은패 1장 = 8장 → 1장 버리기 → 7장
-        expected_hand_size_for_discard = 14 - (meld_count * 3)  # 패를 버려야 하는 상태
-        expected_hand_size_for_draw = 13 - (meld_count * 3)     # 패를 뽑아야 하는 상태
+        # 펑 1개: 13 - 3 = 10장 + 뽑은패 1장 = 11장 → 1장 버리기 → 10장
+        # 깡 1개: 13 - 4 = 9장 + 뽑은패 1장 = 10장 → 1장 버리기 → 9장
+        meld_tiles = self.get_meld_tile_count(self.player_index)
+        expected_hand_size_for_discard = 14 - meld_tiles  # 패를 버려야 하는 상태
+        expected_hand_size_for_draw = 13 - meld_tiles     # 패를 뽑아야 하는 상태
         
         print(f"🔧 예상 패 수: 뽑기={expected_hand_size_for_draw}장, 버리기={expected_hand_size_for_discard}장")
         
@@ -1109,9 +1120,10 @@ class MahjongGame:
         
         print(f"🎯 {ai_name} 상태: 손패={current_hand_size}장, 멜드={meld_count}개")
         
-        # 멜드를 고려한 예상 손패 수 계산
-        expected_hand_size_for_discard = 14 - (meld_count * 3)  # 패를 버려야 하는 상태
-        expected_hand_size_for_draw = 13 - (meld_count * 3)     # 패를 뽑아야 하는 상태
+        # 멜드를 고려한 예상 손패 수 계산 (깡은 4장으로 계산)
+        meld_tiles = self.get_meld_tile_count(self.current_turn)
+        expected_hand_size_for_discard = 14 - meld_tiles  # 패를 버려야 하는 상태
+        expected_hand_size_for_draw = 13 - meld_tiles     # 패를 뽑아야 하는 상태
         
         # 첫 턴 체크 (배패 직후 14장) 또는 펑/깡 후 패 버리기 상태
         if current_hand_size == expected_hand_size_for_discard:
@@ -1401,14 +1413,15 @@ class MahjongGame:
         
         print(f"🎯 패 수 체크: 손패={actual_hand_size}장, 첫턴={'예' if is_first_turn else '아니오'}, 꽃패={flower_count}장")
         
-        # 패 수 검증 (멜드 고려) - 더 유연하게 처리
+        # 패 수 검증 (멜드 고려 - 깡은 4장으로 계산)
         meld_count = len(self.melds[self.player_index])
+        meld_tiles = self.get_meld_tile_count(self.player_index)
         
         # 기본적으로 13장이어야 하지만, 뽑은 패가 있으면 14장
         if self.drawn_tile and self.drawn_tile in self.hands[self.player_index]:
-            expected_hand_size = 14 - (meld_count * 3)
+            expected_hand_size = 14 - meld_tiles
         else:
-            expected_hand_size = 13 - (meld_count * 3)
+            expected_hand_size = 13 - meld_tiles
         
         # 손패에서 클릭된 패 찾기 - render_player_area와 완전히 동일한 로직 사용
         clicked_tile_pos = None
@@ -1493,9 +1506,10 @@ class MahjongGame:
                 self.player_waiting = False
                 clicked_tile_pos = (drawn_x + TILE_SIZE[0]//2, start_y + TILE_SIZE[1]//2)
         
-        # 손패를 버렸을 때는 뜬 패를 손패에 추가 (일반 턴에서만)
+        # 손패를 버렸을 때는 뜬 패를 손패에 추가 (일반 턴 또는 깡 후)
+        # 깡 후에는 보충패(drawn_tile)가 있으므로 일반 턴과 동일하게 처리
         if (discarded_tile and discarded_tile != self.drawn_tile and self.drawn_tile and 
-            not getattr(self, 'after_peng', False)):
+            (not getattr(self, 'after_peng', False) or getattr(self, 'after_gang', False))):
             print(f"🎯 손패를 버렸으므로 뜬 패 {self.drawn_tile}를 손패에 추가")
             self.hands[self.player_index].append(self.drawn_tile)
             # 손패 정렬
@@ -1503,10 +1517,10 @@ class MahjongGame:
             self.hands[self.player_index] = sort_hand_by_position(self.hands[self.player_index], player_position)
             self.drawn_tile = None
             self.player_waiting = False
-        elif getattr(self, 'after_peng', False):
-            # 펑/깡 후에는 drawn_tile을 무조건 초기화 (추가하지 않음)
+        elif getattr(self, 'after_peng', False) and not getattr(self, 'after_gang', False):
+            # 펑 후에는 drawn_tile이 없어야 정상 (보충패 없음)
             if self.drawn_tile:
-                print(f"🔧 펑/깡 후 패 버리기: 뽑은 패 {self.drawn_tile} 무시 (추가하지 않음)")
+                print(f"🔧 펑 후 패 버리기: 뽑은 패 {self.drawn_tile} 무시 (추가하지 않음)")
                 self.drawn_tile = None
                 self.player_waiting = False
         
@@ -1534,10 +1548,11 @@ class MahjongGame:
         self.discard_piles[self.player_index].append(discarded_tile)
         print(f"🎬 애니메이션 완료: {discarded_tile}이 버림패 더미에 추가됨")
         
-        # 펑 후인지 확인
-        if hasattr(self, 'after_peng') and self.after_peng:
-            print("🎯 펑 후 패 버리기 - 다른 플레이어 액션 체크 없이 다음 턴으로")
+        # 펑/깡 후인지 확인
+        if (hasattr(self, 'after_peng') and self.after_peng) or getattr(self, 'after_gang', False):
+            print("🎯 펑/깡 후 패 버리기 - 다른 플레이어 액션 체크 없이 다음 턴으로")
             self.after_peng = False  # 플래그 초기화
+            self.after_gang = False  # 플래그 초기화
             self.advance_turn()
         else:
             # 패를 버린 후 간방 상태 체크 및 다이얼로그 표시 (엎어 상태가 아닐 때만)
@@ -2482,6 +2497,7 @@ class MahjongGame:
                 
                 # 꽃패 보충패 뽑기 - WallManager 사용하여 왕패에서 뽑기
                 attempts = 0
+                replacement_added = False
                 while attempts < 3:
                     replacement_result = self.wall_manager.draw_wang_tile()
                     if replacement_result is not None:
@@ -2491,18 +2507,34 @@ class MahjongGame:
                             # 일반 패면 손패에 추가
                             self.temp_hands[player_idx].append(replacement_tile)
                             print(f"🎴 꽃패 보충패 (왕패에서): {replacement_tile}")
+                            replacement_added = True
                             break
                         else:
                             # 또 꽃패면 꽃패 더미에 추가하고 다시 시도
                             self.temp_flower_tiles[player_idx].append(replacement_tile)
                             print(f"🌸 보충패도 꽃패 (왕패에서): {replacement_tile}")
                     else:
-                        print(f"⚠️ 왕패에서 보충패를 뽑을 수 없음")
+                        # 왕패가 비면 일반 패산에서 시도
+                        fallback_result = self.wall_manager.draw_regular_tile()
+                        if fallback_result is not None:
+                            replacement_tile, _ = fallback_result
+                            if not is_flower_tile(replacement_tile):
+                                self.temp_hands[player_idx].append(replacement_tile)
+                                print(f"🎴 꽃패 보충패 (패산에서): {replacement_tile}")
+                                replacement_added = True
+                        if not replacement_added:
+                            print(f"⚠️ 왕패·패산 모두 비어 보충패 뽑기 실패, 꽃패를 손패에 추가")
+                            self.temp_hands[player_idx].append(tile)
+                            if tile in self.temp_flower_tiles[player_idx]:
+                                self.temp_flower_tiles[player_idx].remove(tile)
                         break
                     attempts += 1
-                    
-                if attempts >= 3:
-                    print(f"⚠️ 꽃패 보충 시도 3회 초과, 강제 종료")
+                
+                if not replacement_added and attempts >= 3:
+                    print(f"⚠️ 꽃패 보충 시도 3회 초과, 꽃패를 손패에 추가 (예외 처리)")
+                    self.temp_hands[player_idx].append(tile)  # 원래 꽃패라도 13장 유지
+                    if tile in self.temp_flower_tiles[player_idx]:
+                        self.temp_flower_tiles[player_idx].remove(tile)
             else:
                 self.temp_hands[player_idx].append(tile)
         
@@ -2753,12 +2785,16 @@ class MahjongGame:
         return count >= 3
     
     def can_an_gang(self, player_idx):
-        """암깡 가능 여부 체크 - 같은 패 4장 보유"""
+        """암깡 가능 여부 체크 - 같은 패 4장 보유 (뽑은 패 포함)"""
         from mahjong_game import get_tile_base_name
         tile_counts = {}
         for tile in self.hands[player_idx]:
             tile_base = get_tile_base_name(tile)
             tile_counts[tile_base] = tile_counts.get(tile_base, 0) + 1
+        # 플레이어의 뽑은 패(drawn_tile)도 포함
+        if player_idx == self.player_index and self.drawn_tile:
+            drawn_base = get_tile_base_name(self.drawn_tile)
+            tile_counts[drawn_base] = tile_counts.get(drawn_base, 0) + 1
         
         # 4장 이상인 패들 반환
         return [tile_base for tile_base, count in tile_counts.items() if count >= 4]
@@ -2903,24 +2939,15 @@ class MahjongGame:
         final_hand_size = len(self.hands[player_idx])
         final_meld_count = len(self.melds[player_idx])
         drawn_tile_info = f"drawn_tile={self.drawn_tile}" if player_idx == self.player_index else "AI"
-        expected_hand_size = 14 - (final_meld_count * 3)  # 펑 후 패를 버려야 하는 상태
+        meld_tiles = self.get_meld_tile_count(player_idx)
+        expected_hand_size = 14 - meld_tiles  # 펑 후 패를 버려야 하는 상태
         
-        print(f"🔧 펑 후 패 수: 손패={final_hand_size}장, 멜드={final_meld_count}개, {drawn_tile_info}")
-        print(f"🔧 펑 후 예상 패 수: {expected_hand_size}장 (14 - {final_meld_count} * 3)")
+        print(f"🔧 펑 후 패 수: 손패={final_hand_size}장, 멜드={final_meld_count}개, 멜드타일={meld_tiles}장, {drawn_tile_info}")
+        print(f"🔧 펑 후 예상 패 수: {expected_hand_size}장 (14 - {meld_tiles})")
         
-        # 패 수가 맞지 않으면 경고
+        # 패 수가 맞지 않으면 경고 (강제 조정하지 않음 - 근본 원인 추적용)
         if final_hand_size != expected_hand_size:
-            print(f"🚨 펑 후 패 수 오류! 실제={final_hand_size}장, 예상={expected_hand_size}장")
-            # 패 수 강제 조정 (임시 방편)
-            if final_hand_size > expected_hand_size:
-                excess = final_hand_size - expected_hand_size
-                print(f"🔧 초과 패 {excess}장 제거 시도")
-                for _ in range(excess):
-                    if self.hands[player_idx]:
-                        removed = self.hands[player_idx].pop()
-                        print(f"🔧 초과 패 제거: {removed}")
-                    else:
-                        break
+            print(f"🚨 펑 후 패 수 오류! 실제={final_hand_size}장, 예상={expected_hand_size}장 (조정하지 않음)")
         
         # 펑 후에는 패를 버려야 함 (한국 마작 규칙 - 패를 뽑지 않음)
         if player_idx == self.player_index:
@@ -2964,11 +2991,16 @@ class MahjongGame:
             }
             
         elif gang_type == 'an_gang':
-            # 암깡: 손패에서 4장 제거
+            # 암깡: 손패에서 4장 제거 (플레이어가 뽑은 패가 4번째면 3장만 제거)
+            tiles_to_remove = 4
+            if player_idx == self.player_index and self.drawn_tile and get_tile_base_name(self.drawn_tile) == tile_base:
+                tiles_to_remove = 3  # drawn_tile이 4번째
+                self.drawn_tile = None  # 뽑은 패를 멜드에 사용
+            
             removed_count = 0
             new_hand = []
             for t in self.hands[player_idx]:
-                if get_tile_base_name(t) == tile_base and removed_count < 4:
+                if get_tile_base_name(t) == tile_base and removed_count < tiles_to_remove:
                     removed_count += 1
                 else:
                     new_hand.append(t)
@@ -2983,14 +3015,19 @@ class MahjongGame:
             }
             
         elif gang_type == 'jia_gang':
-            # 가깡: 손패에서 1장 제거하고 기존 펑을 깡으로 변경
-            new_hand = []
-            removed = False
-            for t in self.hands[player_idx]:
-                if get_tile_base_name(t) == tile_base and not removed:
-                    removed = True
-                else:
-                    new_hand.append(t)
+            # 가깡: 손패에서 1장 제거 (또는 뽑은 패 사용)
+            if player_idx == self.player_index and self.drawn_tile and get_tile_base_name(self.drawn_tile) == tile_base:
+                # 뽑은 패가 4번째 → 손패에서 제거하지 않음
+                self.drawn_tile = None
+                new_hand = self.hands[player_idx][:]  # 그대로 유지
+            else:
+                new_hand = []
+                removed = False
+                for t in self.hands[player_idx]:
+                    if get_tile_base_name(t) == tile_base and not removed:
+                        removed = True
+                    else:
+                        new_hand.append(t)
             
             self.hands[player_idx] = new_hand
             
@@ -3032,13 +3069,19 @@ class MahjongGame:
                 # AI는 바로 손패에 추가
                 self.hands[player_idx].append(replacement_tile)
                 print(f"🔧 AI 깡 보충패를 손패에 추가: {replacement_tile}")
+        else:
+            # 왕패가 비어서 보충패를 뽑을 수 없음 → 유국 처리
+            print("🚫 깡 보충패를 뽑을 수 없음 - 유국!")
+            self.game_winner = None
+            self.finish_game("draw", None)
+            return
         
         # 깡한 플레이어가 다음 턴 (보충패를 뽑았으므로)
         self.current_turn = player_idx
         print(f"🔄 깡 후 턴: {self.player_names[player_idx]} (인덱스: {player_idx})")
         
-        # 깡 후 플래그 설정 (펑과 동일하게 처리)
-        self.after_peng = True
+        # 깡 후 플래그 설정 (펑과 다르게 처리 - 깡은 보충패를 뽑으므로)
+        self.after_gang = True
         
         # 상태 초기화
         self.pending_action = None
@@ -3068,24 +3111,19 @@ class MahjongGame:
         final_hand_size = len(self.hands[player_idx])
         final_meld_count = len(self.melds[player_idx])
         drawn_tile_info = f"drawn_tile={self.drawn_tile}" if player_idx == self.player_index else f"AI_hand={final_hand_size}"
-        expected_hand_size = 14 - (final_meld_count * 3)  # 깡 후 패를 버려야 하는 상태
+        meld_tiles = self.get_meld_tile_count(player_idx)
+        # 플레이어는 drawn_tile이 별도이므로 hand에서 1장 적음
+        if player_idx == self.player_index and self.drawn_tile:
+            expected_hand_size = 14 - meld_tiles - 1  # drawn_tile이 별도이므로
+        else:
+            expected_hand_size = 14 - meld_tiles  # AI는 hand에 포함
         
-        print(f"🔧 깡 후 패 수: 손패={final_hand_size}장, 멜드={final_meld_count}개, {drawn_tile_info}")
-        print(f"🔧 깡 후 예상 패 수: {expected_hand_size}장 (14 - {final_meld_count} * 3)")
+        print(f"🔧 깡 후 패 수: 손패={final_hand_size}장, 멜드={final_meld_count}개, 멜드타일={meld_tiles}장, {drawn_tile_info}")
+        print(f"🔧 깡 후 예상 패 수: {expected_hand_size}장 (14 - {meld_tiles})")
         
-        # 패 수가 맞지 않으면 경고
+        # 패 수가 맞지 않으면 경고 (강제 조정하지 않음 - 근본 원인 추적용)
         if final_hand_size != expected_hand_size:
-            print(f"🚨 깡 후 패 수 오류! 실제={final_hand_size}장, 예상={expected_hand_size}장")
-            # 패 수 강제 조정 (임시 방편)
-            if final_hand_size > expected_hand_size:
-                excess = final_hand_size - expected_hand_size
-                print(f"🔧 초과 패 {excess}장 제거 시도")
-                for _ in range(excess):
-                    if self.hands[player_idx]:
-                        removed = self.hands[player_idx].pop()
-                        print(f"🔧 초과 패 제거: {removed}")
-                    else:
-                        break
+            print(f"🚨 깡 후 패 수 오류! 실제={final_hand_size}장, 예상={expected_hand_size}장 (조정하지 않음)")
         
         print(f"🔧 깡 후 상태 설정 완료!")
         print(f"   - current_turn: {self.current_turn}")
@@ -4049,10 +4087,10 @@ class MahjongGame:
             print("🔧 플레이어 턴으로 복구")
             self.waiting_for_player = True
             
-            # 손패 수 체크
+            # 손패 수 체크 (깡은 4장으로 계산)
             current_hand_size = len(self.hands[self.player_index])
-            meld_count = len(self.melds[self.player_index])
-            expected_hand_size_for_discard = 14 - (meld_count * 3)
+            meld_tiles = self.get_meld_tile_count(self.player_index)
+            expected_hand_size_for_discard = 14 - meld_tiles
             
             if current_hand_size == expected_hand_size_for_discard:
                 print("🔧 패 버리기 상태로 설정")
